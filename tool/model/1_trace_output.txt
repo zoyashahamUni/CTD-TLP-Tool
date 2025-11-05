@@ -1,0 +1,37 @@
+Trace Description: LTL Counterexample 
+Trace Type: Counterexample 
+  -- Loop starts here
+  -> State: 1.1 <-
+    b_target = 3
+    mode = LoggedOut
+    items = 0
+    logout_count = 0
+    logout_after_add = FALSE
+    max_items = 0
+    seen_add = FALSE
+    removed_ever = FALSE
+    removed_after_add = FALSE
+    step = idle
+    c_no_remove = TRUE
+    b_max_items = FALSE
+    a_no_logout = TRUE
+    step_label = idle
+    do_remove = FALSE
+    do_add = FALSE
+    do_checkout = FALSE
+    do_logout = FALSE
+    do_login = FALSE
+  -> State: 1.2 <-
+    b_target = 3
+    mode = LoggedOut
+    items = 0
+    logout_count = 0
+    logout_after_add = FALSE
+    max_items = 0
+    seen_add = FALSE
+    removed_ever = FALSE
+    removed_after_add = FALSE
+    step = idle
+    c_no_remove = TRUE
+    b_max_items = FALSE
+    a_no_logout = TRUE

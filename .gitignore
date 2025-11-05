@@ -1,0 +1,22 @@
+# macOS system files
+.DS_Store
+
+# Temporary / output files
+output/
+trace_output*.txt
+*.trace
+*.out
+*.dot
+*.svg
+*.log
+*.tmp
+
+# Python cache / virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/

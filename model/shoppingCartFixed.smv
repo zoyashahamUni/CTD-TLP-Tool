@@ -1,0 +1,41 @@
+MODULE main
+
+VAR
+    mode : {LoggedOut, Shopping, CheckedOut};
+    items : 0..5;
+
+ASSIGN
+    init(mode) := LoggedOut;
+    init(items) := 0;
+
+    next(mode) := case
+        mode = LoggedOut            : Shopping;
+        mode = Shopping & items > 0 : {CheckedOut, Shopping};
+        mode = Shopping & items = 0 : Shopping;
+        TRUE : mode;
+    esac;
+
+    next(items) := case
+        mode = Shopping & next(mode) = CheckedOut : 0; -- reset on checkout;
+        mode = Shopping & items = 0 : {items + 1, items};
+        mode = Shopping & items = 5 : {items - 1, items};
+        mode = Shopping & items > 0 & items < 5 : {items - 1, items + 1, items};
+        TRUE : items;
+    esac;
+
+-- -- psi1: If items in cart, eventually checkout
+LTLSPEC
+   G (mode = CheckedOut -> items = 0) 
+   --G (mode = Shopping -> F mode = CheckedOut) 
+
+-- -- psi2: Once logged out, user eventually logs in (CartEmpty)
+-- LTLSPEC
+--     G (mode = LoggedOut -> F mode = CartEmpty)
+
+-- -- psi3: Items never exceed 5
+-- INVARSPEC
+--     items <= 5
+
+-- -- invariant: cart resets after checkout
+-- INVARSPEC
+--     mode != CheckedOut | items = 0 -- Items reset after checkout

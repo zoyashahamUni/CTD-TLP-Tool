@@ -1,0 +1,169 @@
+MODULE main
+
+VAR
+    --Abstract system state
+    mode : {LoggedOut, Shopping, CheckedOut};
+    items : 0..5;
+
+    -- A: number of logouts before checkout
+    logout_count : 0..5;        -- cap at 5 to keep state finite
+
+    logout_after_add : boolean;  -- becomes true if logout happens after adding
+
+    -- B: maximum cart size ever reached so far (entire run)
+    max_items : 0..5;
+
+    -- C: action tracking for remove/alternation logic
+    seen_add    : boolean;      -- have we seen any Add so far?
+    removed_ever: boolean;      -- have we seen any Remove so far?
+    removed_after_add : boolean;-- have we removed at least once after an Add?
+    
+    step: {login, logout, add, remove, checkout, idle};
+
+FROZENVAR
+b_target: {3,4,5}; --CTD parameter (chosen once per run it behaves as test configuration)
+
+ASSIGN
+    init(mode) := LoggedOut;
+    init(items) := 0;
+    init(step) := idle; --at the very first state, no action yet
+    init(logout_after_add) := FALSE;
+    
+    init(logout_count)      := 0;
+    init(max_items)         := 0;
+    
+    init(seen_add)          := FALSE;
+    init(removed_ever)      := FALSE;
+    init(removed_after_add) := FALSE;
+    --init(b_target) := {3,4,5}; -- pick 3/4/5 for a specific run
+    
+    next(mode) := case
+      -- after a checkout, don't go back to shopping
+      mode = CheckedOut                      : CheckedOut;
+
+      -- allow staying LoggedOut or logging in
+      mode = LoggedOut                       : {LoggedOut, Shopping};
+
+      -- while Shopping, you may checkout (if cart has items) or keep shopping
+      mode = Shopping & items > 0            : {CheckedOut, Shopping};
+
+      -- while Shopping with empty cart, you may stay or log out
+      mode = Shopping & items = 0            : {Shopping, LoggedOut};
+
+      TRUE : mode;
+    esac;
+
+    next(items) := case
+            -- reset on checkout
+            mode = Shopping & next(mode) = CheckedOut : 0;
+
+            -- reset to 0 when going to LoggedOut (clear cart on logout)
+            next(mode) = LoggedOut                    : 0;
+
+            -- while shopping, allow add/remove/idle within bounds
+            mode = Shopping & items = 0               : {items + 1, items};
+            mode = Shopping & items = 5               : {items - 1, items};
+            mode = Shopping & items > 0 & items < 5   : {items - 1, items + 1, items};
+
+            -- otherwise unchanged (e.g., when LoggedOut or CheckedOut)
+            TRUE : items;
+        esac;
+
+    next(step) := step_label;
+
+    --count logouts
+    next(logout_count) := case
+    -- count a logout when we move from Shopping to LoggedOut
+      --mode = Shopping & next(mode) = CheckedOut : 0;      --Reset here
+      mode = Shopping & next(mode) = LoggedOut & logout_count < 5 : logout_count + 1;
+      TRUE : logout_count;
+    esac;
+
+    --Tracking maximum cart size seen so far
+    next(max_items) := case
+      --next(mode) = CheckedOut | next(mode) = LoggedOut : 0;  -- Reset here
+      next(items) > max_items : next(items);
+      TRUE : max_items;
+    esac;
+
+    -- Have we ever added?
+    next(seen_add) := case
+      --next(mode) = CheckedOut | next(mode) = LoggedOut : FALSE;      -- Reset
+      (mode = Shopping) & (next(mode) = Shopping) & (next(items) = items + 1) : TRUE;
+      TRUE : seen_add;
+    esac;
+
+    -- Have we ever removed?
+    next(removed_ever) := case
+      --next(mode) = CheckedOut | next(mode) = LoggedOut : FALSE;      -- Reset
+      (mode = Shopping) & (next(mode) = Shopping) & (next(items) = items - 1) : TRUE;
+      TRUE : removed_ever;
+    esac;
+
+    -- Have we removed at least once after an Add occurred earlier?
+    next(removed_after_add) := case
+      --next(mode) = CheckedOut | next(mode) = LoggedOut : FALSE;      -- Reset
+      seen_add & (mode = Shopping) & (next(mode) = Shopping) & (next(items) = items - 1) : TRUE;
+      TRUE : removed_after_add;
+    esac;
+
+    -- If we’ve seen an add, and now we go from Shopping → LoggedOut, mark it true
+    next(logout_after_add) := case
+      seen_add & mode = Shopping & next(mode) = LoggedOut : TRUE;
+      TRUE : logout_after_add;
+    esac;
+
+DEFINE
+  -- step detectors (for witness -> ST)
+  do_login    := (mode = LoggedOut) & (next(mode) = Shopping);
+  do_logout   := (mode = Shopping)  & (next(mode) = LoggedOut);
+  do_checkout := (mode = Shopping)  & (items > 0) & (next(mode) = CheckedOut);
+  do_add      := (mode = Shopping)  & (next(mode) = Shopping) & (next(items) = items + 1);
+  do_remove   := (mode = Shopping)  & (next(mode) = Shopping) & (next(items) = items - 1);
+
+  step_label :=
+    case
+      do_login    : login;
+      do_add      : add;  
+      do_remove   : remove;   
+      do_checkout : checkout;
+      do_logout   : logout;
+      TRUE        : idle;
+    esac;
+
+
+  -- Boolean CTD profiles (A,B,C ∈ {0,1})
+  --thresh_max := 5;
+  --a_no_logout := (logout_count = 0);    -- no logout
+  a_no_logout := !logout_after_add;       -- no logout occurred after first add
+  --b_max_items := (max_items    = thresh_max);
+  b_max_items := (max_items = b_target);
+  c_no_remove := !removed_ever;        -- no remove ever happened
+
+
+--Sanity check
+INVARSPEC max_items >= items;                         -- max tracks items
+INVARSPEC (removed_after_add -> seen_add);            -- implies
+INVARSPEC (items >= 0 & items <= 5);                  -- bounds
+INVARSPEC (do_checkout -> items > 0);                 -- safety check
+
+--Progress (doesn't get stuck)
+TRANS !(mode = Shopping & next(mode) = Shopping & items < 5 & next(items) = items)
+
+-- Once adding has occurred, you cannot logout before checkout
+--TRANS !( seen_add & mode = Shopping & next(mode) = LoggedOut )
+ 
+ 
+
+--LTLSPEC F (mode = CheckedOut)
+--LTLSPEC G (do_add -> X !do_remove) --no remove immediately after add
+
+-- CTD rows (A,B,C ∈ {0,1}); run one per row to get an (ST):
+--LTLSPEC F (a_no_logout  &  b_max_items  &  c_no_remove  )  -- Row A=1,B=1,C=1
+--LTLSPEC F (mode = CheckedOut &  a_no_logout  & !b_max_items  &  c_no_remove  )  -- Row A=1,B=0,C=1
+--LTLSPEC F (mode = CheckedOut & !a_no_logout  &  b_max_items  & !c_no_remove )  -- Row A=0,B=1,C=0
+
+-- Forced eventuality goal
+--LTLSPEC !F (mode = CheckedOut & !a_no_logout & b_max_items & c_no_remove)
+
+--A=1, B=0, C=1 - means the user logged out while there are items
