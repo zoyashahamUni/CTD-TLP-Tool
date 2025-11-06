@@ -27,5 +27,5 @@ quit
 
 grep -E "^\s*-> State:|^\s*mode\s*=|^\s*step\s*=" trace_output.txt | nl -ba
 ```
-#Make sure (for example with ls -ltr) what's the name of the file that was actually saved, as sometimes it might be saved as "1_trace_output.txt" or something of this kind. 
+Make sure (for example with ls -ltr) what's the name of the file that was actually saved, as sometimes it might be saved as "1_trace_output.txt" or something of this kind. 
 cat <<EOF
