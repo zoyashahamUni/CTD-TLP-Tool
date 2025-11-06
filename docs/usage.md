@@ -11,7 +11,7 @@ If nuXmv produces a counterexample it means that the positive form of the proper
 
 If there is no counter example, it means that the negated form (!F...) is true, so the original property (without the !) cannot occur - it is not a valid or reachable test scenario.
 
-example: run nuXmv on the main shopping-cart model and have it saved to a file called trace_output.txt. 
+**example**: run nuXmv on the main shopping-cart model and have it saved to a file called trace_output.txt. 
 
 From the repo root:
 ```
