@@ -1,8 +1,0 @@
-step,action,from_mode,to_mode,items_before,items_after,logout_count,max_items,a,b,c
-1,Login,LoggedOut,Shopping,0,,,,,,
-2,AddItem,Shopping,,,1,,1,,,
-3,Checkout,,CheckedOut,5,0,,,,,
-4,AddItem,Shopping,,,1,,,,,
-5,RemoveItem,,,3,2,,,,,False
-6,AddItem,,,2,3,,,,,
-7,RemoveItem,,,3,2,,,,,
