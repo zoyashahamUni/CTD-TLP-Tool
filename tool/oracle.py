@@ -1,7 +1,7 @@
 # tool/oracle.py
 from __future__ import annotations
 from pathlib import Path
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 from .ltl_builder import build_ltl_for_row
 from .config_schema import ToolConfig
 import subprocess
@@ -125,7 +125,7 @@ def classify_row_with_nuxmv(
     row_index: int,
     out_dir: str,
     nuxmv_bin: str = "nuXmv",
-    trace_path_override: str | None = None,
+    trace_path_override: Optional[str] = None,
 ):
     """
     Classify a single CTD row as feasible/infeasible using nuXmv.
