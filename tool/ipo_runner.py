@@ -6,7 +6,7 @@ from itertools import product
 
 from .config_schema import ToolConfig
 from .generator import _domains_from_factors, _pairs_for_row
-from .oracle import classify_row_with_nuxmv
+from .ipo_oracle import classify_row_with_nuxmv    # << UPDATED IMPORT
 
 
 Row = Dict[str, Any]
@@ -44,7 +44,7 @@ def run_ipo_with_oracle(model_path: str, cfg: ToolConfig, out_dir: str):
     infeasible_profiles = []
     global_index = 0
     seen_profiles = set()
-    
+
     # -------------------------------
     # PHASE 1 — STREAM A–B, choose C
     # -------------------------------
@@ -115,7 +115,6 @@ def run_ipo_with_oracle(model_path: str, cfg: ToolConfig, out_dir: str):
                 best_gain = gain
                 best_row = candidate
 
-
         if best_row is None or best_gain == 0:
             break
 
@@ -124,7 +123,7 @@ def run_ipo_with_oracle(model_path: str, cfg: ToolConfig, out_dir: str):
         profile = _profile_name_from_row(best_row)
         seen_profiles.add(profile)
         trace_file = out_dir_path / f"run_{profile}.txt"
-        
+
         global_index += 1
         result = classify_row_with_nuxmv(
             model_path=model_path,
@@ -143,13 +142,10 @@ def run_ipo_with_oracle(model_path: str, cfg: ToolConfig, out_dir: str):
         covered_pairs |= _pairs_for_row(best_row)
         uncovered = all_required_pairs - covered_pairs
 
-    # --------------------
-    # FINAL SUMMARY FILES
-    # --------------------
+    # ---- Write summary files ----
     (out_dir_path / "feasible.txt").write_text(
         "\n".join(feasible_profiles) + "\n", encoding="utf-8"
     )
-
     (out_dir_path / "infeasible.txt").write_text(
         "\n".join(infeasible_profiles) + "\n", encoding="utf-8"
     )
@@ -160,6 +156,7 @@ def run_ipo_with_oracle(model_path: str, cfg: ToolConfig, out_dir: str):
         "rows_phase1": rows_phase1,
         "rows_phase2": rows_phase2,
     }
+
 
 def _profile_name_from_row(row: Dict[str, Any]) -> str:
     """
@@ -174,6 +171,6 @@ def _profile_name_from_row(row: Dict[str, Any]) -> str:
             num = 1 if v else 0
         else:
             num = v
-        abbrev = name[0].upper()  # A,B,C from the first letter
+        abbrev = name[0].upper()
         parts.append(f"{abbrev}{num}")
     return "_".join(parts)

@@ -1,9 +1,33 @@
 # macOS system files
 .DS_Store
 
-# Temporary / output files
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE / editors
+.vscode/
+.idea/
+
+# Output folders (Twix, IPO, old runs)
 output/
-trace_output*.txt
+output_ipo/
+output_twix_*/
+output_twix_batch/
+output_twix_ipo/
+
+# nuXmv generated trace files
+*.txt
 *.trace
 *.out
 *.dot
@@ -11,12 +35,11 @@ trace_output*.txt
 *.log
 *.tmp
 
-# Python cache / virtual environments
-__pycache__/
-*.py[cod]
-.venv/
-venv/
+# trace-output names used by classifier (just in case)
+run_*.txt
+trace_output*.txt
 
-# Editors
-.vscode/
-.idea/
+# Temporary scripts/files created during execution
+*.cmd
+*.tmp
+
