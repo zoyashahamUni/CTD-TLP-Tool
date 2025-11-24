@@ -357,4 +357,4 @@ The process stops when:
 - Every feasible pair is **covered** (appears in at least one feasible test row with an ST trace).
 - Every impossible pair is explicitly marked **infeasible**.
 
-This yields a minimal, oracle-guided CTD test suite with full 2-way coverage over all feasible configurations of the model.
+This gets a minimal, oracle-guided CTD test suite with full 2-way coverage over all feasible configurations of the model.
