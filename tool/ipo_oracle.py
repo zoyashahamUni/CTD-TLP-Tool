@@ -1,22 +1,46 @@
-# tool/ipo_oracle.py
-#
-# Minimal oracle module used ONLY by the IPO runner.
-# This file contains no batch-oracle functionality.
-# It provides only:
-#   - LTL negation
-#   - nuXmv trace execution for a single LTL formula
-#   - classification of a single CTD row (feasible / infeasible)
-#
-
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional, Any, Tuple
 import subprocess
 import tempfile
 
-from .ltl_builder import build_ltl_for_row
+from .ltl_builder import build_ltl_for_row, _expr_for_factor_value
 from .config_schema import ToolConfig
 
+def _render_value_for_ltl(v: object) -> str:
+    """Render Python values into SMV LTL constants."""
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    return str(v)
+
+def build_ltl_for_partial_assignment(cfg: ToolConfig, assignment: Dict[str, object]) -> str:
+    """
+    Build an LTL formula for a *partial* factor assignment, using the
+    same "Option B" mapping as build_ltl_for_row, and including the
+    end-of-test flag.
+
+    Example:
+        assignment = {"a_no_logout_after_add": False, "b_max_items": 3}
+
+    Produces something like:
+        F(end_of_test & no_logout_after_add = FALSE & max_items = 3)
+    """
+    parts = []
+
+    # 1) end_of_test flag (same as build_ltl_for_row)
+    parts.append(cfg.end_flag)
+
+    # 2) Only include factors that appear in this partial assignment
+    for f in cfg.factors:
+        name = f.name
+        if name not in assignment:
+            continue
+        v = assignment[name]
+        expr = _expr_for_factor_value(name, v)
+        parts.append(expr)
+
+    inside = " & ".join(parts)
+    return cfg.ltl_template.format(conditions=inside)
 
 # ------------------------------------------------------------
 # 1. Negate an LTL formula
@@ -174,3 +198,62 @@ def classify_row_with_nuxmv(
         "feasible": feasible,
         "trace_path": str(trace_path),
     }
+
+def classify_partial_with_nuxmv(
+    model_path: str,
+    cfg: ToolConfig,
+    assignment: Dict[str, object],
+    label: str,
+    out_dir: str,
+    nuxmv_bin: str = "nuXmv",
+) -> Dict[str, Any]:
+    """
+    Classify a *partial* assignment (e.g. a single pair) as globally
+    feasible/infeasible.
+
+    - assignment: subset of {factor_name: value}, e.g. {"A": 0, "C": 1}
+    - label: used only for naming the trace file, e.g. "PAIR_A0_C1"
+
+    Semantics:
+      phi := F(end_of_test & conjunction(assignment))
+      We check !phi with nuXmv:
+        - if !phi is FALSE → phi is satisfiable → feasible = True
+        - if !phi is TRUE  → phi is UNSAT       → feasible = False
+    """
+    out_dir_path = Path(out_dir)
+    out_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # Use a deterministic but simple trace name based on label
+    trace_path = out_dir_path / f"run_{label}.txt"
+
+    # 1) Build phi for the partial assignment
+    phi = build_ltl_for_partial_assignment(cfg, assignment)
+    # 2) Negate it
+    neg_phi = negate_ltl(phi)
+
+    # 3) Run nuXmv on !phi
+    rc, stdout, stderr = run_ltlspec_with_trace(
+        model_path=model_path,
+        ltl_formula=neg_phi,
+        trace_output_path=str(trace_path),
+        nuxmv_bin=nuxmv_bin,
+    )
+
+    # 4) Interpret nuXmv output in the same way as for full rows
+    text = stdout + "\n" + stderr
+    if " is false" in text:
+        feasible = True
+    elif " is true" in text:
+        feasible = False
+    else:
+        feasible = False  # conservative default
+
+    return {
+        "assignment": assignment,
+        "label": label,
+        "phi": phi,
+        "neg_phi": neg_phi,
+        "feasible": feasible,
+        "trace_path": str(trace_path),
+    }
+
