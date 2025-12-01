@@ -6,9 +6,9 @@ factors     <- config.factors                              # factor - value doma
 all_pairs   <- COMPUTE_ALL_PAIRS(factors)                  # set of (factor, value) pairs
 
 #2. Initialize global sets      
-feasible_pairs      <- []                                  # proven satisfiable (locally or via rows)
-covered_pairs       <- []                                  # pairs that appeared in a feasible full-row test
-infeasible_pairs    <- []                                  # pairs proven as impossible
+feasible_pairs      <- {}                                  # proven satisfiable (locally or via rows)
+covered_pairs       <- {}                                  # pairs that appeared in a feasible full-row test
+infeasible_pairs    <- {}                                  # pairs proven as impossible
 
 test_suite          <- []                                  # list of feasible rows (full configuration)
 
@@ -36,7 +36,7 @@ base_rows           <- CTD_PAIRWISE_GENERATE (factors)
                                                   infeasible_pairs,
                                                   test_suite)
 
-#5. Return final artifacts
+#5. Return:
 return{
     feasible_pairs,
     covered_pairs,
@@ -160,7 +160,11 @@ procedure TRY_BUILD_ROW_AROUND_PAIR(target_pair, config, infeasible_pairs):
 
             if CONTAINS_KNOWN_INFEASIBLE_PAIR(temp_row, infeasible_pairs):
                 continue    #skip combinations already known as impossible
-        
+
+            # this (f, v) is compatible with all known infeasible pairs
+            value_chosen <- v
+            break
+
         if value_chosen = NONE:
             #no value for f can extend the row without violating known constraints
             return NONE
@@ -192,7 +196,7 @@ procedure TRY_BUILD_ROW_AROUND_PAIR(target_pair, config, infeasible_pairs):
 6. Pair-Level Oracle
 procedure PAIR_LEVEL_ORACLE(row, config, infeasible_pairs):
 
-    newly_feasible_pairs        <- []
+    newly_feasible_pairs        <- {}
 
     ordered_pairs               <- ORDER_PAIRS(EXTRACT_PAIRS(row))
 
@@ -210,7 +214,7 @@ procedure PAIR_LEVEL_ORACLE(row, config, infeasible_pairs):
         if status == FEASIBLE:
             newly_feasible_pairs    <- newly_feasible_pairs U {pair}
 
-    # no single pair was identified as infeasible; row was infeasible
+    # no single pair was identified as infeasible; row as a whole was infeasible
     # due to higher-order interaction or global constraint 
     return (NONE, newly_feasible_pairs)
 
@@ -232,6 +236,3 @@ function CHECK_PAIR_FEASIBILITY(pair, config):
         return FEASIBLE
     else:
         return INFEASIBLE
-        
-
-    
