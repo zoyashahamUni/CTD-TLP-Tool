@@ -65,17 +65,38 @@ class ToolConfig:
 
 def _coerce_factor(raw: Dict[str, Any]) -> Factor:
     name = raw.get("name")
-    kind = raw.get("type") or raw.get("kind")
     values = raw.get("values")
 
+    # 1) Basic checks
     if not isinstance(name, str):
         raise ValueError("Each factor must have a string 'name'")
-    if kind not in ("boolean", "integer"):
-        raise ValueError(f"Factor '{name}': 'type' must be 'boolean' or 'integer'")
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"Factor '{name}': 'values' must be a non-empty list")
 
+    # 2) Try to read explicit kind/type (backwards compatibility)
+    kind = raw.get("type") or raw.get("kind")
+
+    # 3) If kind is not provided → infer from values
+    if kind is None:
+        # All booleans → boolean factor
+        if all(isinstance(v, bool) for v in values):
+            kind = "boolean"
+        # All ints (but not bool – since bool is a subclass of int in Python)
+        elif all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+            kind = "integer"
+        else:
+            raise ValueError(
+                f"Factor '{name}': cannot infer kind from values {values!r}. "
+                "Use consistent booleans or integers, or specify 'kind'."
+            )
+
+    # 4) Validate kind
+    if kind not in ("boolean", "integer"):
+        raise ValueError(f"Factor '{name}': 'type'/'kind' must be 'boolean' or 'integer'")
+
+    # 5) Build normalized Factor
     fac = Factor(name=name, kind=kind, values=values)
     return fac.normalized()
-
 
 def validate_and_build_config(raw: Dict[str, Any]) -> ToolConfig:
     """
