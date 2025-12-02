@@ -57,17 +57,16 @@ ASSIGN
       TRUE                                        : no_logout_after_add;
     esac;
 
-  next(removed_ever)                              := removed_ever | (step = remove);
+  next(removed_ever)          :=
+    case
+      step = remove : TRUE;                     -- In case there was a remove the flag becomes True
+      TRUE          : removed_ever;              -- Otherwise no change
+    esac;
 
   next(max_items) :=
     case
       next(items) > max_items                     : next(items);
       TRUE                                        : max_items;
     esac;
-
--- Invariant enforcing infeasible pair (A=TRUE, B=3): 
--- If the test has ended and no logout occurred after add, 
--- then the maximum number of items must be at least 4. 
-INVAR (end_of_test & no_logout_after_add = TRUE -> max_items >= 4);
 
 

@@ -21,7 +21,7 @@ venv/
 
 # Output folders (Twix, IPO, old runs)
 output/
-output_ipo/
+output_ipo_twix_n/
 output_twix_*/
 output_twix_batch/
 output_twix_ipo/
