@@ -64,16 +64,21 @@ def cond(name, val, cfg):
 #Build the LTL property for a given CTD pair
 def phi_for_pair(pair, cfg):
     (f1, v1), (f2, v2) = pair
-    cs = [cond(f1, v1, cfg), cond(f2, v2, cfg)]
     
-    # To use only the integer values we declared we want to test in the factors.json file
-    for name, e in cfg["factors"].items():
-        vs = e["values"]
-        if vs and all(isinstance(x, int) and not isinstance(x, bool) for x in vs):
-            d = " | ".join(f"{e['smv_var']} = {x}" for x in vs)
-            cs.append(f"({d})")
-    joined = " & ".join(f"({c})" for c in cs)
+    cond1 = cond(f1, v1, cfg)
+    cond2 = cond(f2, v2, cfg)
+    joined = f"({cond1}) & ({cond2})"
     return cfg["tmpl"].replace("{conditions}", joined)
+    
+    # cs = [cond(f1, v1, cfg), cond(f2, v2, cfg)]
+    # To use only the integer values we declared we want to test in the factors.json file
+    # for name, e in cfg["factors"].items():
+    #     vs = e["values"]
+    #     if vs and all(isinstance(x, int) and not isinstance(x, bool) for x in vs):
+    #         d = " | ".join(f"{e['smv_var']} = {x}" for x in vs)
+    #         cs.append(f"({d})")
+    # joined = " & ".join(f"({c})" for c in cs)
+    # return cfg["tmpl"].replace("{conditions}", joined)
 
 #Call nuXmv with the not(generated LTL property) and return the counter example output which means that the row is feasible
 def run_nuxmv(model, phi):
