@@ -3,15 +3,15 @@ CTD-TLP Tool — Usage Guide
 This document explains how to install, configure, and run the CTD-TLP tool, including the requirements for Python, nuXmv, and the project file structure.
 
 1. Prerequisites
-✔ Python
+Python
 
 Python 3.8–3.12 recommended
 
 Install dependencies (only standard library + nuXmv required)
 
-✔ nuXmv
+nuXmv
 
-You must install nuXmv and ensure it is accessible from the command line:
+Install nuXmv and make sure it is accessible from the command line:
 
 macOS / Linux:
 
@@ -25,13 +25,13 @@ Add to PATH:
 export PATH="/path/to/nuXmv:$PATH"
 
 
-Test:
+Test the installation:
 
 nuXmv -help
 
 Windows:
 
-Use the Windows release and ensure nuXmv.exe is in %PATH%.
+Use the Windows release and make sure nuXmv.exe is in %PATH%.
 
 2. Clone the Repository
 git clone <your-github-url>
@@ -39,100 +39,110 @@ cd zoya-ctd-tool
 
 3. Project Structure
 tool/
-  cli.py                → command line interface
-  ipo_runner.py         → dynamic IPO + oracle algorithm
-  ipo_oracle.py         → row/pair feasibility checks (nuXmv)
-  ltl_builder.py        → construct LTL formulas
-  generator.py          → Twix pairwise generator
-  config_schema.py      → factors.json schema
-  config_loader.py      → load/validate config
+  cli.py                - command line interface
+  ipo_runner.py         - dynamic IPO + oracle algorithm
+  ipo_oracle.py         - row/pair feasibility checks (with nuXmv)
+  ltl_builder.py        - construct LTL formulas
+  generator.py          - pairwise generator
+  config_schema.py      - factors.json schema
+  config_loader.py      - load/validate config
 
 examples/
   shopping/
-    model.smv           → running example model
-    factors.json        → CTD factor definitions
+    model.smv           - running example model
+    factors.json        - factor definitions
 
-output_ipo/             → created automatically by oracle
+output_ipo/             - created automatically by the oracle
 
-4. Preparing Your Configuration
-The tool requires two files:
-1. factors.json
+4. Prepare The Configuration
+  The tool requires two files:
+  1. `factors.json`
 
-Defines:
+  Defines:
 
-factor names (A, B, C…)
+  factor names (A, B, C…), value domains, and the LTL template that is going to be used for the   CTD test row.
 
-domains (boolean or integer)
+  Example:
 
-mapping to predicates inside the SMV model
+  {
+    "ltl_template": "F(end_of_test & {conditions})",
+    "step_var": "step",
+    "end_flag": "end_of_test",
 
-Example:
+    "factors": [
+      { "name": "a_no_logout_after_add",  "values": [true, false]},
+      { "name": "b_max_items",            "values": [3, 4, 5] },
+      { "name": "c_no_remove",           "values": [true, false] }
+    ]
+  }
+  **factor** - A logical property that is being tested.
+  **values** - the domain of the factors. The type of the domain is being infered automatically   according to the values (meantime it is allowed to be Boolean anf Integers)
+  **{conditions}** - is replaced with the factors values: (factor1 = v1) & (factor2 = v2) & ...
 
-[
-  { "name": "a_no_logout_after_add", "kind": "boolean" },
-  { "name": "b_max_items",           "kind": "integer", "values": [3, 4, 5] },
-  { "name": "c_no_remove",           "kind": "boolean" }
-]
 
-2. model.smv
+  2. `model.smv`
 
-Must contain:
+  The file must contain:
 
-mode
+  **A step**
+  step : {login, logout,add, remove, checkout, idle};
 
-step
+  **end_of_test**
 
-end_of_test
+  `end_of_test : boolean;`
 
-predicates corresponding to the factors
+  **State variables that are connected to the factors**
+  no_logout_after_add : boolean;
+  max_items           : 0..5;
+  removed_ever        : boolean;
 
-Model must end with:
-
-INVAR end_of_test -> (some condition)
+  **Optional mode variable**
+  `mode : {LoggedOut, Shopping, CheckedOut};`
+  It exists in the model but not a must by the tool.
 
 5. Running the Tool
-✔ Print normalized factor domains
+**Print normalized factor domains**
 python -m tool.cli generate \
   --factors examples/shopping/factors.json \
   --print-rows
 
-✔ Generate the Twix pairwise rows
+**Generate the pairwise rows**
 python -m tool.cli generate \
   --factors examples/shopping/factors.json \
   --pairwise
 
-✔ Print LTL formulas for each row
+**Print LTL formulas**
 python -m tool.cli generate \
   --factors examples/shopping/factors.json \
   --pairwise --ltl
 
-6. Running the Oracle (Dynamic IPO + TLP)
-Full workflow:
+6. Running the Oracle (IPO + TLP)
+**Full workflow:**
 python -m tool.cli oracle-ipo \
   --model examples/shopping/model.smv \
   --factors examples/shopping/factors.json \
   --output-dir output_ipo
 
 
-This will:
+**This will:**
 
-Generate pairwise rows (phase 1)
+  1. Generate pairwise rows
 
-Call nuXmv for each row
+  2. For each row: LTL formula and call nuXmv.
 
-Classify each row:
+  3. Classify each row:
 
-feasible → produces ST (test steps)
+      - feasible - produces ST (test steps)
 
-infeasible → triggers pair-level checks
+      - infeasible - with pair oracle check
 
-Continue generating new rows until:
+  4. Continue generating new rows until:
 
-all feasible pairs are covered
+      - all feasible pairs are covered
 
-infeasible pairs are identified
+      - infeasible pairs are identified
 
-At the end, output directory contains:
+**At the end, output directory contains:**
 
 output_ipo/
   feasible.txt
@@ -145,58 +155,52 @@ output_ipo/
 Each run_*.txt file contains the test steps (ST).
 
 7. Frequent Errors & Troubleshooting
-❌ Error: “Model contract missing variable ‘end_of_test’”
+**Error: “Model contract missing variable ‘end_of_test’”**
 
 Your SMV model must include:
 
 end_of_test : boolean;
 
-
 And a definition for next(end_of_test).
 
-❌ Error: “predicate X not found in SMV model”
+**Error: “predicate X not found in SMV model”**
 
-Ensure that each factor name in factors.json has a matching predicate in model.smv.
+Each factor name in factors.json has a real SMV variable in model.smv.
 
-❌ Error: nuXmv cannot be executed
+**Error: nuXmv not found"**
 
-Check:
-
-which nuXmv
-
+Run: `which nuXmv`
 
 If empty: add nuXmv to PATH.
 
-❌ Output folder empty
+**Output folder empty**
 
-Check permissions and ensure:
+Check the output folder path, permissions and nuXmv installation. 
+For checking the output folder:
 
 --output-dir <folder>
 
-
-exists or can be created.
-
 8. How to Add a New Model
 
-To integrate a new system model:
+To analyze a new system:
 
-Copy your SMV file to examples/<new_system>/model.smv
+Copy your SMV file to `examples/<new_system>/model.smv`
 
-Create matching factors.json
-
-Run:
-
-python -m tool.cli generate --factors factors.json --pairwise
-
+Create matching `factors.json`
 
 Run:
 
-python -m tool.cli oracle-ipo --model model.smv --factors factors.json
+`python -m tool.cli generate --factors factors.json --pairwise`
+
+
+And then:
+
+`python -m tool.cli oracle-ipo --model model.smv --factors factors.json`
 
 
 That’s all — the tool is model-independent as long as the contract is respected.
 
-9. Example End-to-End Run
+9. **Example for End-to-End Run**
 python -m tool.cli oracle-ipo \
   --model examples/shopping/model.smv \
   --factors examples/shopping/factors.json \
