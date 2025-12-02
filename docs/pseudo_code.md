@@ -2,12 +2,16 @@
 
 # 1. Load configuration (JSON factors & SMV file)
 config      <- LOAD_CONFIGURATION (model_file, factors_file)
+
 factors     <- config.factors                              # factor - value domain
+
 all_pairs   <- COMPUTE_ALL_PAIRS(factors)                  # set of (factor, value) pairs
 
 # 2. Initialize global sets      
 feasible_pairs      <- {}                                  # proven satisfiable (locally or via rows)
+
 covered_pairs       <- {}                                  # pairs that appeared in a feasible full-row test
+
 infeasible_pairs    <- {}                                  # pairs proven as impossible
 
 test_suite          <- []                                  # list of feasible rows (full configuration)
