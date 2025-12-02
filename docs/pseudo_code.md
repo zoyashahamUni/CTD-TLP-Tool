@@ -5,14 +5,14 @@ config      <- LOAD_CONFIGURATION (model_file, factors_file)
 factors     <- config.factors                              # factor - value domain
 all_pairs   <- COMPUTE_ALL_PAIRS(factors)                  # set of (factor, value) pairs
 
-#2. Initialize global sets      
+# 2. Initialize global sets      
 feasible_pairs      <- {}                                  # proven satisfiable (locally or via rows)
 covered_pairs       <- {}                                  # pairs that appeared in a feasible full-row test
 infeasible_pairs    <- {}                                  # pairs proven as impossible
 
 test_suite          <- []                                  # list of feasible rows (full configuration)
 
-#3. Phase 1 - Static pairwise rows (IPO style)
+# 3. Phase 1 - Static pairwise rows (IPO style)
 base_rows           <- CTD_PAIRWISE_GENERATE (factors)
 
 (feasible_pairs,
@@ -25,7 +25,7 @@ base_rows           <- CTD_PAIRWISE_GENERATE (factors)
                                     infeasible_pairs,
                                     test_suite)
 
-#4. Phase 2 - Dynamic completion of missing pairs
+# 4. Phase 2 - Dynamic completion of missing pairs
 (feasible_pairs,
  covered_pairs,
  infeasible_pairs,
@@ -36,7 +36,7 @@ base_rows           <- CTD_PAIRWISE_GENERATE (factors)
                                                   infeasible_pairs,
                                                   test_suite)
 
-#5. Return:
+# 5. Return:
 return{
     feasible_pairs,
     covered_pairs,
