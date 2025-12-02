@@ -1,13 +1,13 @@
-1. procedure CTD_TLP_TEST_GENERATION (model_file, factors_file):
+# 1. procedure CTD_TLP_TEST_GENERATION (model_file, factors_file):
 
-# 1. Load configuration (JSON factors & SMV file)
+1. Load configuration (JSON factors & SMV file)
 config      <- LOAD_CONFIGURATION (model_file, factors_file)
 
 factors     <- config.factors                              # factor - value domain
 
 all_pairs   <- COMPUTE_ALL_PAIRS(factors)                  # set of (factor, value) pairs
 
-# 2. Initialize global sets      
+2. Initialize global sets      
 feasible_pairs      <- {}                                  # proven satisfiable (locally or via rows)
 
 covered_pairs       <- {}                                  # pairs that appeared in a feasible full-row test
@@ -16,7 +16,7 @@ infeasible_pairs    <- {}                                  # pairs proven as imp
 
 test_suite          <- []                                  # list of feasible rows (full configuration)
 
-# 3. Phase 1 - Static pairwise rows (IPO style)
+3. Phase 1 - Static pairwise rows (IPO style)
 base_rows           <- CTD_PAIRWISE_GENERATE (factors)
 
 (feasible_pairs,
@@ -29,7 +29,7 @@ base_rows           <- CTD_PAIRWISE_GENERATE (factors)
                                     infeasible_pairs,
                                     test_suite)
 
-# 4. Phase 2 - Dynamic completion of missing pairs
+4. Phase 2 - Dynamic completion of missing pairs
 (feasible_pairs,
  covered_pairs,
  infeasible_pairs,
@@ -40,7 +40,7 @@ base_rows           <- CTD_PAIRWISE_GENERATE (factors)
                                                   infeasible_pairs,
                                                   test_suite)
 
-# 5. Return:
+5. Return:
 return{
     feasible_pairs,
     covered_pairs,
@@ -48,7 +48,7 @@ return{
     test_suite
 }
 
-2. Phase 1 - Static Pairwise Rows + Row Oracle + Pair Oracle (run_ipo_with_oracle):
+# 2. Phase 1 - Static Pairwise Rows + Row Oracle + Pair Oracle (run_ipo_with_oracle):
 
 procedure PHASE1_ROWS(base_rows,
                       config,
@@ -89,7 +89,7 @@ procedure PHASE1_ROWS(base_rows,
     return (feasible_pairs, covered_pairs, infeasible_pairs, test_suite)
 
 
-3. Phase 2 - Dynamic Completion of Uncovered Pairs (run_ipo_with_oracle):
+# 3. Phase 2 - Dynamic Completion of Uncovered Pairs (run_ipo_with_oracle):
 
 procedure PHASE2_DYNAMIC_COMPLETION(all_pairs,
                                     config,
@@ -144,7 +144,7 @@ procedure PHASE2_DYNAMIC_COMPLETION(all_pairs,
     return (feasible_pairs, covered_pairs, infeasible_pairs, test_suite)
 
 
-4. Building a Row Around a Target Pair
+# 4. Building a Row Around a Target Pair
 
 procedure TRY_BUILD_ROW_AROUND_PAIR(target_pair, config, infeasible_pairs):
     row <-PARTIAL_ASSIGNMENT_WITH(target_pair)
@@ -178,26 +178,26 @@ procedure TRY_BUILD_ROW_AROUND_PAIR(target_pair, config, infeasible_pairs):
     return row              #completed full configuration including target_pair
 
 
-    5. Row-Level Oracle (nuXmv)
+# 5. Row-Level Oracle (nuXmv)
 
-    function ORACLE_ROW_FEASIBLE(phi_row, config):
+function ORACLE_ROW_FEASIBLE(phi_row, config):
 
-        # How it is implemented:
-        # We check the negation of phi_row in nuXmv: check_ltlspec -p "!phi_row"
-        #
-        # if !phi_row is FALSE   -> no behavior violates phi_row                 -> row is FEASIBLE.
-        # if !phi_row is TRUE    -> there exists a behavior violating phi_row    -> row is INFEASIBLE.
+    # How it is implemented:
+    # We check the negation of phi_row in nuXmv: check_ltlspec -p "!phi_row"
+    #
+    # if !phi_row is FALSE   -> no behavior violates phi_row                 -> row is FEASIBLE.
+    # if !phi_row is TRUE    -> there exists a behavior violating phi_row    -> row is INFEASIBLE.
 
-        result  <- NUXMV_CHECK_NEGATED(phi_row, config)
+    result  <- NUXMV_CHECK_NEGATED(phi_row, config)
 
-        if result == UNSAT:
-            return FEASIBLE
-        else:
-            return INFEASIBLE
+    if result == UNSAT:
+        return FEASIBLE
+    else:
+        return INFEASIBLE
 
 
 
-6. Pair-Level Oracle
+# 6. Pair-Level Oracle
 procedure PAIR_LEVEL_ORACLE(row, config, infeasible_pairs):
 
     newly_feasible_pairs        <- {}
@@ -224,7 +224,7 @@ procedure PAIR_LEVEL_ORACLE(row, config, infeasible_pairs):
 
 
 
-7. Pair Feasiblity via Local Oracle
+# 7. Pair Feasiblity via Local Oracle
 
 function CHECK_PAIR_FEASIBILITY(pair, config):
 
