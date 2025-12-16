@@ -1,40 +1,4 @@
-"""
-The script finds feasible a small set of feasible tests based on CTD algorithm (pairwise) while using the nuXmv model as the oracle. 
-It generates LTL formula based each time on different pair as the basis of the algorithm in order to cover all pairs. 
-How the tool is working: 
-1. The tool reads two files: factors.json and model.smv 
-- factors.json - includes which factors exist in the system and how the LTL formula is going to be generated. 
-- model.smv - The set of rules that exist in our testing system. 
-Each **factor** is a testing dimension. 
-In the SMV model each factor is represented by implementing the state variables, 
-their value in the final state summarizes some temporal behavior for the whole test,
-For example - "no logout after add while items>0" or "the maximum number of items that was seen during the run" etc. 
-- the LTL formula that is passed to the nuXmv has the structure defined in factors.json: F(end_of_test & factor1=value1 & factor2=value2 & ...) 
-Which means that the temporal aspect is encoded in the SMV transition relation, 
-The LTL checks whether there is a complete test whose final summary variables match this CTD row. 
-2. The system creates all pairs of the factors' values. The set of uncovered pairs is called "todo" 
-e.g. - if there are 3 factors:a,b,c val(a)= {0,1}, val(b)={3,4,5} val(c) = {0,1}. 
-There will be a full list of all the values of the following factors combinations: (a,b), (b,c), (a,c). 
-The todo list is: (a.0, b.3), (a.0, b.4) ... (a.0,c.0)....(b.3, c.0)....(b.5,c.1) 
-3. While the todo list is not empty: 
-    1. Pick randomly one pair (u,v) from the list "todo": 
-        //1.1 generate factors (u', v') from (u,v) 
-        1.2 construct the LTL formula phi=F(...) 
-    2. Ask nuXmv oracle if there is a trace in the FSM that satisfies phi, 
-    (actually it is sent as !(phi) and the nuXmv returns a counterexample that satisfies (phi) if it is feasible or none if there is no such trace)
-        1. If no - the pair (u',v') will be marked as infeasible and will be removed from the list "todo" 
-        2. If yes - 
-            1. the oracle returns the trace W. Note that W is a sequence of ST (test steps). Save W as a trace file in the output_traces folder. 
-            2. Let t be the final state in the trace W. Note that t contains the full row's factors' values, (specifically for factors that are different from (u',v'). 
-            //3. Let list_t be the list of all the pairs of factors' values that appear in t. 
-            3. For each remaining pair in todo, check whether t satisfies it.
-            4. Remove from the "todo" all the pairs that t satisfies. 
-            5. print all generated feasible rows after the loop ends.
-            
-At the end the algorithm creates the output_traces folder which contains one trace per generated test, 
-such that every feasible pair of factor values is "covered" by at least one trace from this folder. 
-Naturally we hope to have as few tests (and trace files) as possible.
-"""
+
 import json, subprocess, tempfile, os, re, random
 from itertools import combinations
 from pathlib import Path
@@ -49,18 +13,92 @@ OUTPUT_DIR = "output_traces"
 #parse the output trace from nuXmv
 STATE_RE = re.compile(r"^\s*-> State:")
 ASSIGN_RE = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$")
+VAR_FROM_LTL_RE = re.compile(r"[FGX]\(\s*([A-Za-z_][A-Za-z0-9_]*)")
 
-#read the factors.json 
+#read the factors.json and load as dictionary
 def load_cfg(path):
     with open(path) as f:
         d = json.load(f)
+    facs = {}
+
+    for f in d["factors"]:
+        name = f["name"]
+
+        # Boolean factor: has a single LTL formula
+        if "ltl" in f:
+            base_ltl = f["ltl"]
+
+            # Try to extract the SMV variable from the LTL, assuming patterns like F(var) or F(var = 3)
+            m = VAR_FROM_LTL_RE.search(base_ltl)
+            smv_var = m.group(1) if m else None
+            
+            if smv_var is None:
+                raise ValueError(
+                    f"Cannot infer SMV variable name for factor {name!r} from LTL: {base_ltl!r}. "
+                    "Expected patterns like F(var) or F(var = value)."
+                )
+                        
+
+            facs[name] = {
+                "name": name,
+                "kind": "bool",
+                # CTD domain:
+                "values": [False, True],
+                # For a boolean factor, the LTL for each value:
+                "value_ltls": {
+                    False: f"!({base_ltl})",
+                    True: base_ltl,
+                },
+                "smv_var": smv_var,
+            }
+
+        # Enumerated factor: has "values": [ { "value": X, "ltl": "..." }, ... ]
+        elif "values" in f:
+            domain = []
+            value_ltls = {}
+            smv_var = None
+
+            for entry in f["values"]:
+                if "value" not in entry or "ltl" not in entry:
+                    raise ValueError(f"Factor {name!r} has a malformed values entry: {entry!r}")
+                
+                v = entry["value"]
+                ltl = entry["ltl"]
+                
+                domain.append(v)
+                value_ltls[v] = ltl
+                
+                if smv_var is None:
+                    m = VAR_FROM_LTL_RE.search(ltl)
+                    if m:
+                        smv_var = m.group(1)
+                
+            if smv_var is None:
+                raise ValueError(
+                    f"Cannot infer SMV variable name for factor {name!r} from any of its value LTLs. "
+                    "Expected patterns like F(var = value)."
+                )    
+
+            facs[name] = {
+                "name": name,
+                "kind": "enum",
+                "values": domain,      # e.g. [3,4,5]
+                "value_ltls": value_ltls,
+                "smv_var": smv_var,
+            }
+
+        else:
+            raise ValueError(
+                f"Factor {name!r} must have either 'ltl' or 'values' in factors.json"
+            )
+
     return {
-        "factors": {x["name"]: x for x in d["factors"]},
-        "tmpl": d["ltl_template"],
+        "factors": facs,
         "end": d["end_flag"],
     }
 
-#Create all the CTD pairs combinations of the factor values
+
+#Create all the pairs combinations of the factor's values ((f1,v1),(f2,v2)...((fn-1,vn-1),(fn,vn))
 def all_pairs(factors):
     names = list(factors)
     ps = set()
@@ -70,32 +108,53 @@ def all_pairs(factors):
                 ps.add(((f1, v1), (f2, v2)))
     return ps
 
-#Build the individual factor constraint to use in phi_for_pair
-def cond(name, val, cfg):
-    e = cfg["factors"][name]
-    v = "TRUE" if val is True else "FALSE" if val is False else str(val)
-    return f"({e['smv_var']} = {v})"
+# Keep the int values according to what was assigned in the factors.json
+def end_domain_guard(cfg):
+    clauses = []
+    for name, e in cfg["factors"].items():
+        # Only guard enum/int-like factors (domain not purely boolean)
+        vs = e["values"]
+        if all(isinstance(v, bool) for v in vs):
+            continue
 
-#Build the LTL property for a given CTD pair
+        smv_var = e.get("smv_var")
+        if smv_var is None:
+            raise RuntimeError(f"Missing smv_var for factor {name!r}")
+
+        # Build: (smv_var = v1) | (smv_var = v2) | ...
+        disj = " | ".join(f"({smv_var} = {v})" for v in vs)
+        clauses.append(f"({disj})")
+
+    return "TRUE" if not clauses else " & ".join(clauses)
+
+
+def end_state_cond(name, val, cfg):
+    e = cfg["factors"][name]
+    smv_var = e["smv_var"]
+
+    if smv_var is None:
+        raise RuntimeError(f"Missing smv_var for factor {name!r}")
+
+    if isinstance(val, bool):
+        v = "TRUE" if val else "FALSE"
+        return f"({smv_var} = {v})"
+    else:
+        return f"({smv_var} = {val})"
+
+
+#Build the LTL property for a given CTD pair. The cfg is guidance of how to build the LTL phrase
 def phi_for_pair(pair, cfg):
     (f1, v1), (f2, v2) = pair
-    
-    cond1 = cond(f1, v1, cfg)
-    cond2 = cond(f2, v2, cfg)
-    joined = f"({cond1}) & ({cond2})"
-    return cfg["tmpl"].replace("{conditions}", joined)
-    
-    # cs = [cond(f1, v1, cfg), cond(f2, v2, cfg)]
-    # To use only the integer values we declared we want to test in the factors.json file
-    # for name, e in cfg["factors"].items():
-    #     vs = e["values"]
-    #     if vs and all(isinstance(x, int) and not isinstance(x, bool) for x in vs):
-    #         d = " | ".join(f"{e['smv_var']} = {x}" for x in vs)
-    #         cs.append(f"({d})")
-    # joined = " & ".join(f"({c})" for c in cs)
-    # return cfg["tmpl"].replace("{conditions}", joined)
+    end = cfg["end"]
 
-#Call nuXmv with the not(generated LTL property) and return the counter example output which means that the row is feasible
+    phi1_at_end = end_state_cond(f1, v1, cfg)
+    phi2_at_end = end_state_cond(f2, v2, cfg)
+
+    # Require: there exists a future state where end_flag is TRUE AND
+    # the selected factor-values hold in THAT SAME end state.
+    guard = end_domain_guard(cfg)
+    return f"F(({end} = TRUE) & ({guard}) & ({phi1_at_end}) & ({phi2_at_end}))"
+#Run nuXmv as the oracle by sending the not(phi) and returning the counter example output if the row is feasible, if True is returned the pair is infeasible return None.
 def run_nuxmv(model, phi):
     script = f"read_model -i {model}\ngo\ncheck_ltlspec -p \"!( {phi} )\"\nshow_traces -v\nquit\n" #The script that runs the nuXmv
     
@@ -112,7 +171,7 @@ def run_nuxmv(model, phi):
         except OSError: pass
     return out if "is false" in out else None
 
-#Extract the entire set of factor values that exist when end_State==True
+#Extract the row's factors when (phi) is feasible
 def extract_row(stdout, cfg):
     end_flag = cfg["end"]
     facs = cfg["factors"]
@@ -126,21 +185,32 @@ def extract_row(stdout, cfg):
         m = ASSIGN_RE.match(line)
         if m:
             state[m.group(1)] = m.group(2).strip()
-    if state.get(end_flag) == "TRUE":
+    if state.get(end_flag) == "TRUE":           #you reached the end of the Trace (test steps)
         last = state
     if last is None:
-        return None
+        return None                             # it didn't end
     row = {}
     for name, e in facs.items():
         raw = last.get(e["smv_var"])
         if raw is None: return None
         vs = e["values"]
         if all(isinstance(v, bool) for v in vs):
-            row[name] = (raw.upper() == "TRUE")
+            
+            value = (raw.upper() == "TRUE")
         else:
-            row[name] = int(raw)
-    return row
-#Files that are created to keep the traces for runnin test steps
+            value = int(raw) 
+        allowed = set(vs)
+        if value not in allowed:
+            raise RuntimeError(
+                f"Extracted value {value!r} for factor {name!r} "
+                f"not in declared domain {sorted(allowed)}"
+            )
+
+        row[name] = value       
+            
+            
+    return row                                  # The abstract CTD test - looks like a_no_logout_after_add: True, b_max_items: 4, c_no_remove: False 
+#Files that are created to keep the traces for the test steps called in a name as: run_A0_B5_C1.txt
 def filename_for_row(row):
     parts = []
     for name in sorted(row.keys()):
@@ -151,6 +221,11 @@ def filename_for_row(row):
     return "run_" + "_".join(parts) + ".txt"
 
 
+def row_key(row):
+    return tuple(sorted(row.items()))
+
+
+#save the trace of the row or just return
 def save_trace(row, trace, output_dir=OUTPUT_DIR):
     if trace is None:
         return
@@ -168,7 +243,7 @@ def save_trace(row, trace, output_dir=OUTPUT_DIR):
             lines = lines[i+1:]
             break    
 
-    with open(out_dir / filename, "w") as f:
+    with open(out_dir / filename, "w") as f:            #write the cleaned trace to a file
         f.write("\n".join(lines) + "\n")
 
 #Runs nuXmv for a pair according to the model and calls the extract_row to figure out what is the entire set of factor values for this specific row
@@ -176,13 +251,53 @@ def test_for_pair(pair, cfg, model):
     out = run_nuxmv(model, phi_for_pair(pair, cfg))
     if not out:
         return None, None
+    
     row = extract_row(out, cfg)
+    if row is None:
+        raise RuntimeError(
+            "nuXmv returned a satisfying trace, but no state with end_flag=TRUE was found. "
+        )
     return row, out
 
-#Checks if a rest row satisfies the given CTD pair
+#Checks which pairs are covered by the row
 def row_satisfies(row, pair):
     (f1, v1), (f2, v2) = pair
     return row[f1] == v1 and row[f2] == v2
+
+def pairs_covered_by_row(row, all_pairs_set): 
+    return {p for p in all_pairs_set if row_satisfies(row, p)}
+
+def minimize_tests_greedy(tests, feasible_pairs):
+    # Precompute coverage per test
+    cov = [pairs_covered_by_row(t, feasible_pairs) for t in tests]
+
+    remaining = set(feasible_pairs)
+    chosen = []
+    used = set()
+
+    # Greedy pick: each time choose the test that covers most remaining pairs
+    while remaining:
+        best_i = None
+        best_gain = set()
+
+        for i, cset in enumerate(cov):
+            if i in used:
+                continue
+            gain = cset & remaining
+            if len(gain) > len(best_gain):
+                best_gain = gain
+                best_i = i
+
+        if best_i is None:
+            # Should not happen if tests truly cover feasible_pairs
+            break
+
+        used.add(best_i)
+        chosen.append(tests[best_i])
+        remaining -= best_gain
+
+    return chosen
+
 
 #Sets up the data structures that are needed to implement the algorithm
 #It loads the configuration from factors.json
@@ -194,25 +309,55 @@ def gen_tests(model_path, factors_path):
     pairs = all_pairs(cfg["factors"])
     todo = set(pairs)
     tests, infeasible = [], set()
+    seen_rows = set()
+
     while todo:
         pair = random.choice(tuple(todo))
         row, trace = test_for_pair(pair, cfg, model_path)
+        
+        #infeasible
         if row is None:
             infeasible.add(pair)
             todo.remove(pair)
             continue
+        #feasible
+        k = row_key(row)
+        if k in seen_rows:
+            # Row already produced; still remove covered pairs, but do not add a duplicate test / trace
+            for p in list(todo):
+                if row_satisfies(row, p):
+                    todo.remove(p)
+            continue
+        seen_rows.add(k)
+        
         tests.append(row)
         save_trace(row, trace)
         for p in list(todo):
             if row_satisfies(row, p):
                 todo.remove(p)
+                
+                
+    covered = set()
+    for row in tests:
+        for p in pairs:
+            if row_satisfies(row, p):
+                covered.add(p)
+
+    contradictions = infeasible & covered
+    if contradictions:
+        raise RuntimeError(f"Infeasible pairs covered by generated tests: {contradictions}")            
+                
+    feasible_pairs = pairs - infeasible
+    tests = minimize_tests_greedy(tests, feasible_pairs)
+
+                
     return tests, infeasible, pairs
 
 #The beginning
 def main():
     model = str(Path(MODEL_PATH).resolve())
     factors = str(Path(FACTORS_PATH).resolve())
-    tests, infeasible, pairs = gen_tests(model, factors)
+    tests, infeasible, pairs = gen_tests(model, factors)        #tests = the generated CTD rows, 
     
     #Prints the tests that we need to run
     print("Generated tests:")

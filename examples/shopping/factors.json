@@ -2,22 +2,21 @@
   "factors": [
     {
       "name": "a_no_logout_after_add",
-      "smv_var": "no_logout_after_add",
-      "values": [false, true]
+      "ltl": "F(no_logout_after_add)"
     },
     {
       "name": "b_max_items",
-      "smv_var": "max_items",
-      "values": [3, 4, 5]
+      "values": [
+        { "value": 3, "ltl": "F(max_items = 3)" },
+        { "value": 4, "ltl": "F(max_items = 4)" },
+        { "value": 5, "ltl": "F(max_items = 5)" }
+      ]
     },
     {
       "name": "c_removed_ever",
-      "smv_var": "removed_ever",
-      "values": [false, true]
+      "ltl": "F(removed_ever)"
     }
   ],
-
-  "ltl_template": "F(end_of_test & {conditions})",
   "step_var": "step",
   "end_flag": "end_of_test"
 }
