@@ -92,9 +92,14 @@ def load_cfg(path):
                 f"Factor {name!r} must have either 'ltl' or 'values' in factors.json"
             )
 
+    if "step_var" not in d:
+        raise ValueError("Missing required 'step_var' in factors.json")
+    
     return {
         "factors": facs,
-        "end": d["end_flag"],
+        "end": d.get("end_flag"),
+        "step_var": d["step_var"],
+        "test_flag": d.get("test_flag", "TRUE")
     }
 
 
@@ -127,33 +132,24 @@ def end_domain_guard(cfg):
 
     return "TRUE" if not clauses else " & ".join(clauses)
 
-
-def end_state_cond(name, val, cfg):
-    e = cfg["factors"][name]
-    smv_var = e["smv_var"]
-
-    if smv_var is None:
-        raise RuntimeError(f"Missing smv_var for factor {name!r}")
-
-    if isinstance(val, bool):
-        v = "TRUE" if val else "FALSE"
-        return f"({smv_var} = {v})"
-    else:
-        return f"({smv_var} = {val})"
-
-
 #Build the LTL property for a given CTD pair. The cfg is guidance of how to build the LTL phrase
 def phi_for_pair(pair, cfg):
     (f1, v1), (f2, v2) = pair
-    end = cfg["end"]
 
-    phi1_at_end = end_state_cond(f1, v1, cfg)
-    phi2_at_end = end_state_cond(f2, v2, cfg)
+    # factor LTLs characterize the trace
+    phi1 = cfg["factors"][f1]["value_ltls"][v1]
+    phi2 = cfg["factors"][f2]["value_ltls"][v2]
 
-    # Require: there exists a future state where end_flag is TRUE AND
-    # the selected factor-values hold in THAT SAME end state.
     guard = end_domain_guard(cfg)
-    return f"F(({end} = TRUE) & ({guard}) & ({phi1_at_end}) & ({phi2_at_end}))"
+    test_flag = cfg.get("test_flag", "TRUE")
+    end_flag = cfg.get("end")
+
+    if end_flag:
+        reach_extract = f"F(({end_flag} = TRUE) & ({guard}))"
+    else:
+        reach_extract = "TRUE"
+
+    return f"({test_flag}) & ({reach_extract}) & ({phi1}) & ({phi2})"
 #Run nuXmv as the oracle by sending the not(phi) and returning the counter example output if the row is feasible, if True is returned the pair is infeasible return None.
 def run_nuxmv(model, phi):
     script = f"read_model -i {model}\ngo\ncheck_ltlspec -p \"!( {phi} )\"\nshow_traces -v\nquit\n" #The script that runs the nuXmv
@@ -163,53 +159,104 @@ def run_nuxmv(model, phi):
         f.write(script)
         cmd = f.name
     try:
-        #for cleanup consistency using the Path
-        out = subprocess.run(["nuXmv", "-source", cmd],
-                             capture_output=True, text=True).stdout
+        try:
+            proc = subprocess.run(
+                ["nuXmv", "-source", cmd],
+                capture_output=True,
+                text=True,
+                timeout=30          # <-- this is the key addition
+            )
+            out = proc.stdout
+        except subprocess.TimeoutExpired:
+        # nuXmv took too long → treat as no satisfying trace
+            return None
     finally:
-        try: os.remove(cmd)
-        except OSError: pass
+        try:
+            os.remove(cmd)
+        except OSError:
+            pass
+            
     return out if "is false" in out else None
 
-#Extract the row's factors when (phi) is feasible
-def extract_row(stdout, cfg):
-    end_flag = cfg["end"]
-    facs = cfg["factors"]
-    state, last = {}, None
+def extract_steps(stdout, cfg):
+    step_var = cfg["step_var"]
+    steps = []
+
+    state = {}
     for line in stdout.splitlines():
         if STATE_RE.match(line):
-            if state.get(end_flag) == "TRUE":
-                last = state.copy()
+            # finalize previous state
+            val = state[step_var].strip().strip('"').lower()
+            steps.append(val)
             state = {}
             continue
+
         m = ASSIGN_RE.match(line)
         if m:
             state[m.group(1)] = m.group(2).strip()
-    if state.get(end_flag) == "TRUE":           #you reached the end of the Trace (test steps)
-        last = state
-    if last is None:
-        return None                             # it didn't end
+
+    # finalize last state (end of output)
+    if state and step_var in state:
+        val = state[step_var].strip().strip('"').lower()
+        steps.append(val)
+    return steps
+
+#Extract the row's factors when (phi) is feasible
+def extract_row(stdout, cfg):
+    end_flag = cfg["end"]           #may be None
+    facs = cfg["factors"]
+
+    state = {}
+    last_any = None
+    last_end = None
+    
+    for line in stdout.splitlines():    
+        if STATE_RE.match(line):
+            if state:
+                last_any = state.copy()
+                if end_flag is not None and state.get(end_flag) == "TRUE":
+                    last_end = state.copy()
+            state = {}
+            continue            
+
+        m = ASSIGN_RE.match(line)
+        if m:
+            state[m.group(1)] = m.group(2).strip()
+    
+    if state:
+        last_any = state
+        if end_flag is not None and state.get(end_flag) == "TRUE":
+            last_end = state
+
+    if end_flag is not None:
+        if last_end is None:
+            return None
+        last = last_end
+    else:
+        if last_any is None:
+            return None
+        last = last_any
     row = {}
     for name, e in facs.items():
         raw = last.get(e["smv_var"])
-        if raw is None: return None
+        if raw is None: 
+            return None
         vs = e["values"]
         if all(isinstance(v, bool) for v in vs):
-            
             value = (raw.upper() == "TRUE")
         else:
             value = int(raw) 
+
         allowed = set(vs)
         if value not in allowed:
             raise RuntimeError(
                 f"Extracted value {value!r} for factor {name!r} "
                 f"not in declared domain {sorted(allowed)}"
             )
-
         row[name] = value       
             
-            
     return row                                  # The abstract CTD test - looks like a_no_logout_after_add: True, b_max_items: 4, c_no_remove: False 
+
 #Files that are created to keep the traces for the test steps called in a name as: run_A0_B5_C1.txt
 def filename_for_row(row):
     parts = []
@@ -226,26 +273,34 @@ def row_key(row):
 
 
 #save the trace of the row or just return
-def save_trace(row, trace, output_dir=OUTPUT_DIR):
-    if trace is None:
+def save_steps(row, stdout, cfg, output_dir=OUTPUT_DIR):
+    steps = extract_steps(stdout, cfg)
+    if not steps:
         return
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
     filename = filename_for_row(row)
 
-    # split trace into lines
-    lines = trace.splitlines()
+    with open(out_dir / filename, "w") as f:
+        for i, s in enumerate(steps, start=1):
+            f.write(f"{i}. {s}\n")
 
-    # keep only the part after the "Trace number" marker
-    for i, line in enumerate(lines):
-        if "<!-- ################### Trace number" in line:
-            lines = lines[i+1:]
-            break    
+def prune_output_files(chosen_tests, output_dir=OUTPUT_DIR):
+    out_dir = Path(output_dir)
+    if not out_dir.exists():
+        return
 
-    with open(out_dir / filename, "w") as f:            #write the cleaned trace to a file
-        f.write("\n".join(lines) + "\n")
+    keep = {filename_for_row(t) for t in chosen_tests}
 
+    for p in out_dir.glob("run_*.txt"):
+        if p.name not in keep:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+            
 #Runs nuXmv for a pair according to the model and calls the extract_row to figure out what is the entire set of factor values for this specific row
 def test_for_pair(pair, cfg, model):
     out = run_nuxmv(model, phi_for_pair(pair, cfg))
@@ -254,9 +309,8 @@ def test_for_pair(pair, cfg, model):
     
     row = extract_row(out, cfg)
     if row is None:
-        raise RuntimeError(
-            "nuXmv returned a satisfying trace, but no state with end_flag=TRUE was found. "
-        )
+        raise RuntimeError("nuXmv returned a satisfying trace, but no parsable state was found.")
+
     return row, out
 
 #Checks which pairs are covered by the row
@@ -331,7 +385,7 @@ def gen_tests(model_path, factors_path):
         seen_rows.add(k)
         
         tests.append(row)
-        save_trace(row, trace)
+        save_steps(row, trace, cfg)
         for p in list(todo):
             if row_satisfies(row, p):
                 todo.remove(p)
@@ -349,7 +403,7 @@ def gen_tests(model_path, factors_path):
                 
     feasible_pairs = pairs - infeasible
     tests = minimize_tests_greedy(tests, feasible_pairs)
-
+    prune_output_files(tests)
                 
     return tests, infeasible, pairs
 
