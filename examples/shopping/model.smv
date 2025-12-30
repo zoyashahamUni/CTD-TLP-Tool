@@ -5,7 +5,7 @@ VAR
   items : 0..5;
   end_of_test : boolean;
 
-  no_logout_after_add : boolean;
+  logout_after_add : boolean;
   removed_ever : boolean;
   max_items : 0..5;
 
@@ -14,7 +14,7 @@ ASSIGN
   init(items):= 0;
   init(mode) := LoggedOut;
   init(end_of_test) := FALSE;
-  init(no_logout_after_add) := TRUE;
+  init(logout_after_add) := FALSE;
   init(removed_ever) := FALSE;
   init(max_items) := 0;
     
@@ -51,10 +51,10 @@ ASSIGN
       next(mode) = CheckedOut   : {idle};
     esac;
 
-  next(no_logout_after_add)  :=
+  next(logout_after_add)  :=
     case
-      step = logout & items > 0               : FALSE;
-      TRUE                                        : no_logout_after_add;
+      step = logout & items > 0               : TRUE;
+      TRUE                                        : logout_after_add;
     esac;
 
   next(removed_ever)          :=

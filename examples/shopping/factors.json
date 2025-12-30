@@ -1,8 +1,8 @@
 {
   "factors": [
     {
-      "name": "a_no_logout_after_add",
-      "ltl": "F(no_logout_after_add)"
+      "name": "a_logout_after_add",
+      "ltl": "F(logout_after_add)"
     },
     {
       "name": "b_max_items",
@@ -18,5 +18,6 @@
     }
   ],
   "step_var": "step",
-  "end_flag": "end_of_test"
+  "end_flag": "end_of_test",
+  "test_flag": "TRUE"
 }

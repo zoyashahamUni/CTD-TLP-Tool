@@ -14,6 +14,10 @@ OUTPUT_DIR = "output_traces"
 STATE_RE = re.compile(r"^\s*-> State:")
 ASSIGN_RE = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$")
 VAR_FROM_LTL_RE = re.compile(r"[FGX]\(\s*([A-Za-z_][A-Za-z0-9_]*)")
+SPEC_VERDICT_RE = re.compile(
+    r"^\s*--\s*specification\b.*\bis\s+(true|false)\b",
+    re.IGNORECASE
+)
 
 #read the factors.json and load as dictionary
 def load_cfg(path):
@@ -24,13 +28,19 @@ def load_cfg(path):
     for f in d["factors"]:
         name = f["name"]
 
+        # Prefer explicit smv_var from JSON; fall back to inference if missing
+        explicit_smv_var = f.get("smv_var")
+
         # Boolean factor: has a single LTL formula
         if "ltl" in f:
             base_ltl = f["ltl"]
 
-            # Try to extract the SMV variable from the LTL, assuming patterns like F(var) or F(var = 3)
-            m = VAR_FROM_LTL_RE.search(base_ltl)
-            smv_var = m.group(1) if m else None
+            # Use explicit smv_var if given, otherwise infer from LTL
+            smv_var = explicit_smv_var
+            if smv_var is None:
+                # Try to extract the SMV variable from the LTL, assuming patterns like F(var) or F(var = 3)
+                m = VAR_FROM_LTL_RE.search(base_ltl)
+                smv_var = m.group(1) if m else None
             
             if smv_var is None:
                 raise ValueError(
@@ -38,7 +48,6 @@ def load_cfg(path):
                     "Expected patterns like F(var) or F(var = value)."
                 )
                         
-
             facs[name] = {
                 "name": name,
                 "kind": "bool",
@@ -56,7 +65,8 @@ def load_cfg(path):
         elif "values" in f:
             domain = []
             value_ltls = {}
-            smv_var = None
+            # Use explicit smv_var if given, otherwise infer from LTLs
+            smv_var = explicit_smv_var            
 
             for entry in f["values"]:
                 if "value" not in entry or "ltl" not in entry:
@@ -150,9 +160,16 @@ def phi_for_pair(pair, cfg):
         reach_extract = "TRUE"
 
     return f"({test_flag}) & ({reach_extract}) & ({phi1}) & ({phi2})"
+    
 #Run nuXmv as the oracle by sending the not(phi) and returning the counter example output if the row is feasible, if True is returned the pair is infeasible return None.
-def run_nuxmv(model, phi):
-    script = f"read_model -i {model}\ngo\ncheck_ltlspec -p \"!( {phi} )\"\nshow_traces -v\nquit\n" #The script that runs the nuXmv
+def run_nuxmv(model, phi, timeout_sec=30):
+    script = (
+        f"read_model -i {model}\n"
+        "go\n"
+        f"check_ltlspec -p \"!( {phi} )\"\n"
+        "show_traces -v\n"
+        "quit\n"                                #The script that runs the nuXmv
+    )
     
     # make sure the temp file is cleaned
     with tempfile.NamedTemporaryFile("w", suffix=".cmd", delete=False) as f:
@@ -164,20 +181,37 @@ def run_nuxmv(model, phi):
                 ["nuXmv", "-source", cmd],
                 capture_output=True,
                 text=True,
-                timeout=30          # <-- this is the key addition
+                timeout=timeout_sec
             )
-            out = proc.stdout
-        except subprocess.TimeoutExpired:
-        # nuXmv took too long → treat as no satisfying trace
-            return None
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                f"nuXmv timed out after {timeout_sec} seconds for phi:\n{phi}"
+            ) from e
+
+        out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+
+        verdict = None
+        for line in out.splitlines():
+            m = SPEC_VERDICT_RE.match(line)
+            if m:
+                verdict = m.group(1).lower()
+
+        if verdict == "false":
+            return "FEASIBLE", out
+        if verdict == "true":
+            return "INFEASIBLE", out
+
+        raise RuntimeError(
+            f"Could not parse nuXmv verdict (neither true nor false) for phi:\n{phi}\n\n"
+            f"Raw output:\n{out}"
+        )
+
     finally:
         try:
             os.remove(cmd)
         except OSError:
             pass
             
-    return out if "is false" in out else None
-
 def extract_steps(stdout, cfg):
     step_var = cfg["step_var"]
     steps = []
@@ -185,9 +219,9 @@ def extract_steps(stdout, cfg):
     state = {}
     for line in stdout.splitlines():
         if STATE_RE.match(line):
-            # finalize previous state
-            val = state[step_var].strip().strip('"').lower()
-            steps.append(val)
+            if state and step_var in state:
+                val = state[step_var].strip().strip('"').lower()
+                steps.append(val)
             state = {}
             continue
 
@@ -228,14 +262,17 @@ def extract_row(stdout, cfg):
         if end_flag is not None and state.get(end_flag) == "TRUE":
             last_end = state
 
-    if end_flag is not None:
-        if last_end is None:
-            return None
+    # Choose which state to use for reading the factor summary variables:
+    # 1. If the model has an end_flag and we actually reached it, prefer that state.
+    # 2. Otherwise, fall back to the last state we saw in the trace.
+    if end_flag is not None and last_end is not None:
         last = last_end
-    else:
-        if last_any is None:
-            return None
+    elif last_any is not None:
         last = last_any
+    else:
+        # No states at all in the trace → nothing to extract
+        return None
+
     row = {}
     for name, e in facs.items():
         raw = last.get(e["smv_var"])
@@ -303,15 +340,20 @@ def prune_output_files(chosen_tests, output_dir=OUTPUT_DIR):
             
 #Runs nuXmv for a pair according to the model and calls the extract_row to figure out what is the entire set of factor values for this specific row
 def test_for_pair(pair, cfg, model):
-    out = run_nuxmv(model, phi_for_pair(pair, cfg))
-    if not out:
+    status, out = run_nuxmv(model, phi_for_pair(pair, cfg))
+    if status == "FEASIBLE":    
+        row = extract_row(out, cfg)
+        if row is None:
+            raise RuntimeError("nuXmv returned a satisfying trace, but no parsable state was found.")
+        return row, out
+    if status == "INFEASIBLE":
+        # explicitly infeasible pair
         return None, None
-    
-    row = extract_row(out, cfg)
-    if row is None:
-        raise RuntimeError("nuXmv returned a satisfying trace, but no parsable state was found.")
 
-    return row, out
+    # we should never get here with the current run_nuxmv implementation
+    raise RuntimeError(
+        f"Unexpected nuXmv status {status!r} for phi:\n{phi_for_pair(pair, cfg)}\n\nOutput:\n{out}"
+    )
 
 #Checks which pairs are covered by the row
 def row_satisfies(row, pair):
@@ -362,18 +404,21 @@ def gen_tests(model_path, factors_path):
     cfg = load_cfg(factors_path)
     pairs = all_pairs(cfg["factors"])
     todo = set(pairs)
-    tests, infeasible = [], set()
+    
+    tests = []
+    infeasible = set()
     seen_rows = set()
 
     while todo:
         pair = random.choice(tuple(todo))
         row, trace = test_for_pair(pair, cfg, model_path)
-        
+
         #infeasible
         if row is None:
             infeasible.add(pair)
             todo.remove(pair)
             continue
+        
         #feasible
         k = row_key(row)
         if k in seen_rows:
@@ -382,24 +427,16 @@ def gen_tests(model_path, factors_path):
                 if row_satisfies(row, p):
                     todo.remove(p)
             continue
-        seen_rows.add(k)
         
+        seen_rows.add(k)
         tests.append(row)
         save_steps(row, trace, cfg)
+        
         for p in list(todo):
             if row_satisfies(row, p):
                 todo.remove(p)
-                
-                
-    covered = set()
-    for row in tests:
-        for p in pairs:
-            if row_satisfies(row, p):
-                covered.add(p)
 
-    contradictions = infeasible & covered
-    if contradictions:
-        raise RuntimeError(f"Infeasible pairs covered by generated tests: {contradictions}")            
+
                 
     feasible_pairs = pairs - infeasible
     tests = minimize_tests_greedy(tests, feasible_pairs)

@@ -13,13 +13,13 @@ The tool reads two files: `factors.json` and `model.smv`
 
 ### 1.1 Steps and Termination
 - A **trace** is a sequence of states returned by the model checker, whereas a **test** is a sequence of actions extracted from that trace.
-- As SMV models executions as state sequences only, the action dimension is implicit in the model. In order for the model to encode tests as action sequences, there has to be a designated state variable (in this case `step_var`) which represents the executed action at each state. The tool extracts the test by accumulating values of `step_var` along a trace.
-- The tool may optionally employ an `end_flag` to signal the end of a trace run. Nevertheless, all LTL properties are checked against an entire trace run irrespective of whether the trace ends or not.
-- The model can provide summary state variables that collect information throughout the trace. These variables are solely used for computing values that describe the trace as a whole (for instance, if logout came after an add operation, or the maximum number of items observed).
+- As SMV models executions are state sequences only, the action dimension is implicit in the model. In order for the model to encode tests as action sequences, there has to be a designated state variable (it is stated as `step_var` in `factors.json`) which represents the executed action at each state. The tool extracts the test by collecting values of `step_var` along a trace.
 
 ### 1.2 Test Definition
+We view testing as a sequence of actions that a tester sends to a system under test and validates its responses. 
+The tool automates the  selection of user actions based on CTD coverage criteria. Verification of the system responses is out of the scope of this tool, assumed to be taken care of by an external mechanism.
 
-The tool emphasizes selecting action sequences that provide coverage. System correctness is assumed to be taken care of by an external mechanism.
+The user controls 
 
 Optionally, there can be a constraint for the test by an LTL formula named `test_flag`, which defines the valid test traces. In the absence of `test_flag`, a trace is considered to be a valid test where `test_flag = TRUE`.
 
@@ -146,6 +146,7 @@ Naturally we hope to have as few tests (and trace files) as possible.
 
 The smv model **must** provide the following:
 
+- **Monotonicity Assumption** - Each factor is imlemented by a **monotone-increasing** summary state variable (once it becomes TRUE it never goes back to FALSE), whose final value is semantically equivalent to the factor's LTL definition over the entire trace.
 - A step variable whose name is given by `step_var` in `factors.json`. Its values represent the actions executed throughout the test.
 
 - summary variables for all factors – which suit the factors' extracted variables that the `smv_var` resolves to.
