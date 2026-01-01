@@ -7,7 +7,7 @@ from pathlib import Path
 # config files
 
 MODEL_PATH = "examples/shopping/model.smv"
-FACTORS_PATH = "examples/shopping/factors.json"
+SETTINGS_PATH = "examples/shopping/settings.json"
 OUTPUT_DIR = "output_traces"
 
 #parse the output trace from nuXmv
@@ -151,15 +151,15 @@ def phi_for_pair(pair, cfg):
     phi2 = cfg["factors"][f2]["value_ltls"][v2]
 
     guard = end_domain_guard(cfg)
-    test_flag = cfg.get("test_flag", "TRUE")
+    test_rule = cfg.get("test_rule", "TRUE")
     end_flag = cfg.get("end")
 
     if end_flag:
+        test_rule = test_rule.replace("end_flag", end_flag)
         reach_extract = f"F(({end_flag} = TRUE) & ({guard}))"
     else:
         reach_extract = "TRUE"
-
-    return f"({test_flag}) & ({reach_extract}) & ({phi1}) & ({phi2})"
+    return f"({test_rule}) & ({reach_extract}) & ({phi1}) & ({phi2})"
     
 #Run nuXmv as the oracle by sending the not(phi) and returning the counter example output if the row is feasible, if True is returned the pair is infeasible return None.
 def run_nuxmv(model, phi, timeout_sec=30):
@@ -400,8 +400,8 @@ def minimize_tests_greedy(tests, feasible_pairs):
 #using the todo list to check the pairs that appear there
 #Either they'll be infeasible or feasible - in both cases they'll be removed from the todo. 
 # If they're infeasible - they'll be moved to a specific list, so we'll not use them again while building the other rows
-def gen_tests(model_path, factors_path):
-    cfg = load_cfg(factors_path)
+def gen_tests(model_path, settings_path):
+    cfg = load_cfg(settings_path)
     pairs = all_pairs(cfg["factors"])
     todo = set(pairs)
     
@@ -447,8 +447,8 @@ def gen_tests(model_path, factors_path):
 #The beginning
 def main():
     model = str(Path(MODEL_PATH).resolve())
-    factors = str(Path(FACTORS_PATH).resolve())
-    tests, infeasible, pairs = gen_tests(model, factors)        #tests = the generated CTD rows, 
+    settings = str(Path(SETTINGS_PATH).resolve())
+    tests, infeasible, pairs = gen_tests(model, settings)        #tests = the generated CTD rows, 
     
     #Prints the tests that we need to run
     print("Generated tests:")
