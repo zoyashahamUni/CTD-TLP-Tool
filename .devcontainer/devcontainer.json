@@ -1,6 +1,7 @@
 {
   "name": "CTD-TLP Tool",
   "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "postCreateCommand": "wget \"https://nuxmv.fbk.eu/downloads/nuXmv-2.1.0-linux64.tar.xz\" -O /tmp/nuXmv-2.1.0-linux64.tar.xz && tar -xf /tmp/nuXmv-2.1.0-linux64.tar.xz -C /tmp && sudo cp /tmp/nuXmv-2.1.0-linux64/bin/nuXmv /usr/local/bin/nuXmv && sudo chmod +x /usr/local/bin/nuXmv",
   "customizations": {
     "vscode": {
       "extensions": [
