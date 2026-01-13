@@ -19,5 +19,5 @@
   ],
   "step_var": "step",
   "end_flag": "end_of_test",
-  "test_flag": "TRUE"
+  "test_rule": "FG(end_flag)"
 }

@@ -19,7 +19,7 @@ SPEC_VERDICT_RE = re.compile(
     re.IGNORECASE
 )
 
-#read the factors.json and load as dictionary
+#read the settings.json and load as dictionary
 def load_cfg(path):
     with open(path) as f:
         d = json.load(f)
@@ -99,17 +99,16 @@ def load_cfg(path):
 
         else:
             raise ValueError(
-                f"Factor {name!r} must have either 'ltl' or 'values' in factors.json"
+                f"Factor {name!r} must have either 'ltl' or 'values' in settings.json"
             )
 
     if "step_var" not in d:
-        raise ValueError("Missing required 'step_var' in factors.json")
+        raise ValueError("Missing required 'step_var' in settings.json")
     
     return {
         "factors": facs,
         "end": d.get("end_flag"),
-        "step_var": d["step_var"],
-        "test_flag": d.get("test_flag", "TRUE")
+        "step_var": d["step_var"]
     }
 
 
@@ -123,7 +122,7 @@ def all_pairs(factors):
                 ps.add(((f1, v1), (f2, v2)))
     return ps
 
-# Keep the int values according to what was assigned in the factors.json
+# Keep the int values according to what was assigned in the settings.json
 def end_domain_guard(cfg):
     clauses = []
     for name, e in cfg["factors"].items():
@@ -396,7 +395,7 @@ def minimize_tests_greedy(tests, feasible_pairs):
 
 
 #Sets up the data structures that are needed to implement the algorithm
-#It loads the configuration from factors.json
+#It loads the configuration from settings.json
 #using the todo list to check the pairs that appear there
 #Either they'll be infeasible or feasible - in both cases they'll be removed from the todo. 
 # If they're infeasible - they'll be moved to a specific list, so we'll not use them again while building the other rows

@@ -1,39 +1,39 @@
 The script finds a small set of feasible tests based on CTD algorithm (pairwise) while using the nuXmv model as the oracle.  
-It generates LTL formula for each selected pair, by combining the factor LTL formulas which are defined in `factors.json`.  
+It generates LTL formula for each selected pair, by combining the factor LTL formulas which are defined in `settings.json`.  
 The LTL formula is used to ask the nuXmv if a feasible trace exists which satisfies the two factor conditions.
 
 ## How the tool is working
 
 ### 1. Inputs
 
-The tool reads two files: `factors.json` and `model.smv`
+The tool reads two files: `settings.json` and `model.smv`
 
-- `factors.json` – defines the test parameters of the system which is under test. It includes their domains and the temporal constraints for each parameter's value. The LTL formulas are constructed from the factors.  
+- `settings.json` – defines the test parameters of the system which is under test. It includes their domains and the temporal constraints for each parameter's value. The LTL formulas are constructed from the factors.  
 - `model.smv` – The set of rules that exist in our testing system.
 
 ### 1.1 Steps and Termination
 - A **trace** is a sequence of states returned by the model checker, whereas a **test** is a sequence of actions extracted from that trace.
-- As SMV models executions are state sequences only, the action dimension is implicit in the model. In order for the model to encode tests as action sequences, there has to be a designated state variable (it is stated as `step_var` in `factors.json`) which represents the executed action at each state. The tool extracts the test by collecting values of `step_var` along a trace.
+- As SMV models executions are state sequences only, the action dimension is implicit in the model. In order for the model to encode tests as action sequences, there has to be a designated state variable (it is stated as `step_var` in `settings.json`) which represents the executed action at each state. **The tool extracts the test by collecting values of `step_var` along a trace**.
+- `test_rule` is an LTL constraint defining which traces should be treated as valid test traces. In this case `FG(end_flag)`. If `test_rule`is not provided, it is implicitly treated as `TRUE`, and no additional restriction is imposed on the trace.
+-`end_flag` indicates the model variable that marks the logical end point of a test and the extraction point for the factors' values.
 
 ### 1.2 Test Definition
 We view testing as a sequence of actions that a tester sends to a system under test and validates its responses. 
 The tool automates the  selection of user actions based on CTD coverage criteria. Verification of the system responses is out of the scope of this tool, assumed to be taken care of by an external mechanism.
 
-The user controls 
+The definition of a **test** is model-driven. The user controls this definition with the SMV model and the configuration that is provided in `settings.json`. In particular, the model specifies how action sequences are represented (through the `step_var`) and how the traces should be interpreted as test executions.
 
-Optionally, there can be a constraint for the test by an LTL formula named `test_flag`, which defines the valid test traces. In the absence of `test_flag`, a trace is considered to be a valid test where `test_flag = TRUE`.
-
-Oracle queries need to only be performed on traces satisfying `test_flag`.
+Oracle queries need to only be performed on traces satisfying `test_rule`.
 
 LTL formulas are used to characterize properties of traces (tests), not properties of the system under test.
 
 ### 1.3 Factor Domain Enforcement
 When factors have non-Boolean domains such as integers, the enforcement of the domain in the oracle query is made explicit.
 
-When a factor has a non-Boolean domain  (for example it consists of integers in {3,4,5}) - the oracle query will explicitly constrain the corresponding summary variable to choose one from the declared domain. This would mean that its query would include the statement: `(b_max_items = 3) OR (b_max_items = 4) OR (b_max_items = 5)`. This will prevent the oracle from satisfying the pair constraints with any value not in the factor's domain.
+When a factor has a non-Boolean domain  (for example it consists of integers in {3,4,5}) - the oracle query constrains the summary variable at the extraction point, ensuring that factor values are read only from the declared domain. This would mean that its query would include the statement: `(b_max_items = 3) OR (b_max_items = 4) OR (b_max_items = 5)`. This will prevent the oracle from satisfying the pair constraints with any value not in the factor's domain.
 
 - Each **factor** represents a testing dimension (i.e. an abstract test parameter).
-The temporal meaning of each factor is defined in `factors.json` using one or more LTL formulas, where more than one formula is used when a single factor value imposes a few temporal constraints (an integer value of a factor).  
+The temporal meaning of each factor is defined in `settings.json` using one or more LTL formulas, where more than one formula is used when a single factor value imposes a few temporal constraints (an integer value of a factor).  
 Together These formulas give a description of the required temporal property for every possible factor value.
 
 Values which are in the domain of a single factor are considered mutually exclusive by their definition, it is enforced by construction - each test case assigns exactly one value per factor, whereas the values of different factors are considered mutually exclusive only if the system's constraints is infeasible with the values of the specific factors. 
@@ -46,19 +46,16 @@ Factor values are representing the characteristics of a trace over time, rather 
 
 **What are the factors**
 
-The LTL formula that is passed for each test has the structure defined in `factors.json`.  
+The LTL formula that is passed for each test has the structure defined in `settings.json`.  
 It is constructed directly from the per-factor LTL formula.  
 
-For a given factor-value assignment `(f = v)`, the matching LTL formula `phi_f(v)` is taken from `factors.json`.  
+For a given factor-value assignment `(f = v)`, the matching LTL formula `phi_f(v)` is taken from `settings.json`.  
 When a pair is selected `(f1 = v1, f2 = v2)`, the tool constructs:
 
-`phi = test_flag & F (guard & cond(f1 = v1) & cond(f2 = v2))`
-
-`F` is evaluated over the trace and requires the condition to hold at some point in the execution. The component enforces the selected CTD pair.
-`test_flag` restricts the space of valid traces and is interpreted as sn LTL property over the trace.
-
-Which means that the temporal aspect is encoded in the SMV transition relation.  
-The LTL checks whether there exists a trace which satisfies the LTL formulas according to the factor values that were chosen.  
+`phi = test_rule & F((end_flag = TRUE) & domain_guard) & phi_f1(v1) & phi_f2 (v2)`
+The LTL formulas per factor, `phi_f(v)`, express temporal characteristics that may span multiple states, therefore they are combined outside the operator `F`. 
+The operator `F` is used only to designate a valid extraction point for the factor values, and where all non-Boolean summary variables satisfy `domain_guard`.
+The system's temporal behavior is encoded in the SMV transition relation. Given this model, the oracle query checks whether there exists a trace that satisfies `phi` for the selected factor values. 
 ---
 
 ### 2. Pair Generation (**pseudo code**)
@@ -90,13 +87,14 @@ While the todo list is not empty:
 1. Pick randomly one pair `(u = x, v = y)` from the list **todo**:
    - construct the LTL formula  
      ```
-     phi = test_flag & F (phi_u(x) & phi_v(y))
+     phi = test_rule & F((end_flag = TRUE) & domain_guard) & phi_u(x) & phi_v(y)
      ```
-     `phi_u(x)` and `phi_v(y)` are taken from `factors.json` (LTL formulas).
+     `phi_u(x)` and `phi_v(y)` are taken from `settings.json` as the per-factor LTL formulas for the selected factor values.
+     `test_rule`, if provided, restricts traces to valid tests, and the `F(...)` component ensures the trace reached a valid extraction point (end_flag) while enforcing declared domains for non-Boolean factors (domain_guard).
 
 2. Ask nuXmv oracle if there is a trace in the FSM that satisfies `phi`  
    (implemented by checking `!(phi)`; the nuXmv returns a counterexample  
-   that satisfies `(phi)` if it is feasible or None if there is no such trace)
+   that satisfies `(phi)` if it is feasible or reports the specification is true (no counterexample) if there is no such trace.
 
    1. If no such trace exists – the pair `(u=x, v=y)` will be marked as infeasible and will be removed from the list **todo**.
    2. If such a trace exists –
@@ -146,15 +144,15 @@ Naturally we hope to have as few tests (and trace files) as possible.
 
 The smv model **must** provide the following:
 
-- **Monotonicity Assumption** - Each factor is imlemented by a **monotone-increasing** summary state variable (once it becomes TRUE it never goes back to FALSE), whose final value is semantically equivalent to the factor's LTL definition over the entire trace.
-- A step variable whose name is given by `step_var` in `factors.json`. Its values represent the actions executed throughout the test.
+- **Monotonicity Assumption** - Each factor is implemented by a **monotone-increasing** summary state variable (for example for Boolean variables - once it becomes TRUE it never goes back to FALSE), whose final value is semantically equivalent to the factor's LTL definition over the entire trace.
+- A step variable whose name is given by `step_var` in `settings.json`. Its values represent the actions executed throughout the test. **It is not enforced by the tool**.
 
 - summary variables for all factors – which suit the factors' extracted variables that the `smv_var` resolves to.
   - one SMV variable per factor (or for few values if the factor is an integer)
   - the variables accumulate information over the entire run - for example - `max_items` and `removed_ever`
 
 The model **may** include:
-- A `test_flag` LTL formula (in `factors.json`) that restricts which traces are considered valid tests. If it does not exist then `test_flag = TRUE`.
+- A `test_rule` LTL formula (in `settings.json`) that restricts which traces are considered valid tests. If it does not exist then `test_rule = TRUE` - meaning no additional restriction is imposed.
 
 
 ## The Tool's Pseudo Code
@@ -188,3 +186,17 @@ Greedily select a small subset of the stored tests so that:
 
 OUTPUT:
 Minimized set of tests, each test represents the trace in test steps
+
+###Running the tool in Github Codespaces:
+
+1. Open the repository on the Github site, then click **Code --> Codespace --> Create codespace on main**.
+2. Wait for the Codespace to start (VS Code in the browser).
+3. Open a Terminal in the Codespase and execute:
+```
+
+python basic2.py
+```
+
+There is no local installation required as nuXmv anf Python are pre-installed in the Codespace.
+
+  
