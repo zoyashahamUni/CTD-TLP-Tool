@@ -1,3 +1,31 @@
+## How to Run the Demo (Github Codespaces)
+
+### Open the repository
+[repository](https://github.com/zoyashahamUni/CTD-TLP-Tool)
+
+### Create your own Codespace
+
+- Click the green **code** button
+- Go to the **Codespaces** tab.
+- Click **Create codespace on main**.
+
+### Run the example test suite
+
+In the terminal at the bottom of the Codepace site run: 
+  `python score_tests.py tests/example_suite.txt`
+
+You will see a score and a list of detected and missed bugs.
+
+### Edit and re-run
+
+- Open `tests/example_suite.txt` in the editor.
+- Change or add tests (one test per line, the actions are separated with a commas and followed a space)
+- Run again: `python score_tests.py tests/example_suite.txt`
+- Watch how the score and the detected bugs list change.
+
+
+
+
 The script finds a small set of feasible tests based on CTD algorithm (pairwise) while using the nuXmv model as the oracle.  
 It generates LTL formula for each selected pair, by combining the factor LTL formulas which are defined in `settings.json`.  
 The LTL formula is used to ask the nuXmv if a feasible trace exists which satisfies the two factor conditions.
@@ -197,6 +225,8 @@ Minimized set of tests, each test represents the trace in test steps
 python basic2.py
 ```
 
-There is no local installation required as nuXmv anf Python are pre-installed in the Codespace.
+There is no local installation required as nuXmv and Python are pre-installed in the Codespace.
+
+
 
   
