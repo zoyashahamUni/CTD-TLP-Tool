@@ -6,18 +6,29 @@ from pathlib import Path
 
 # config files
 
-MODEL_PATH = "examples/shopping/model.smv"
+MODEL_PATH = "examples/shopping/minimal_model.smv"
 SETTINGS_PATH = "examples/shopping/settings.json"
 OUTPUT_DIR = "output_traces"
 
 #parse the output trace from nuXmv
-STATE_RE = re.compile(r"^\s*-> State:")
+STATE_RE = re.compile(r"^\s*->\s*State:")
 ASSIGN_RE = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$")
-VAR_FROM_LTL_RE = re.compile(r"[FGX]\(\s*([A-Za-z_][A-Za-z0-9_]*)")
 SPEC_VERDICT_RE = re.compile(
     r"^\s*--\s*specification\b.*\bis\s+(true|false)\b",
     re.IGNORECASE
 )
+
+def assert_balanced_parentheses(s: str):
+    bal = 0
+    for ch in s:
+        if ch == '(':
+            bal += 1
+        elif ch == ')':
+            bal -= 1
+            if bal < 0:
+                raise ValueError(f"Too many ')' in phi:\n{s}")
+    if bal != 0:
+        raise ValueError(f"Unbalanced parentheses (balance={bal}) in phi:\n{s}")
 
 #read the settings.json and load as dictionary
 def load_cfg(path):
@@ -28,45 +39,26 @@ def load_cfg(path):
     for f in d["factors"]:
         name = f["name"]
 
-        # Prefer explicit smv_var from JSON; fall back to inference if missing
-        explicit_smv_var = f.get("smv_var")
-
         # Boolean factor: has a single LTL formula
         if "ltl" in f:
             base_ltl = f["ltl"]
 
-            # Use explicit smv_var if given, otherwise infer from LTL
-            smv_var = explicit_smv_var
-            if smv_var is None:
-                # Try to extract the SMV variable from the LTL, assuming patterns like F(var) or F(var = 3)
-                m = VAR_FROM_LTL_RE.search(base_ltl)
-                smv_var = m.group(1) if m else None
             
-            if smv_var is None:
-                raise ValueError(
-                    f"Cannot infer SMV variable name for factor {name!r} from LTL: {base_ltl!r}. "
-                    "Expected patterns like F(var) or F(var = value)."
-                )
                         
             facs[name] = {
                 "name": name,
                 "kind": "bool",
-                # CTD domain:
                 "values": [False, True],
-                # For a boolean factor, the LTL for each value:
                 "value_ltls": {
                     False: f"!({base_ltl})",
                     True: base_ltl,
                 },
-                "smv_var": smv_var,
+                # "smv_var": smv_var,
             }
 
-        # Enumerated factor: has "values": [ { "value": X, "ltl": "..." }, ... ]
         elif "values" in f:
             domain = []
-            value_ltls = {}
-            # Use explicit smv_var if given, otherwise infer from LTLs
-            smv_var = explicit_smv_var            
+            value_ltls = {}     
 
             for entry in f["values"]:
                 if "value" not in entry or "ltl" not in entry:
@@ -77,24 +69,12 @@ def load_cfg(path):
                 
                 domain.append(v)
                 value_ltls[v] = ltl
-                
-                if smv_var is None:
-                    m = VAR_FROM_LTL_RE.search(ltl)
-                    if m:
-                        smv_var = m.group(1)
-                
-            if smv_var is None:
-                raise ValueError(
-                    f"Cannot infer SMV variable name for factor {name!r} from any of its value LTLs. "
-                    "Expected patterns like F(var = value)."
-                )    
 
             facs[name] = {
                 "name": name,
                 "kind": "enum",
                 "values": domain,      # e.g. [3,4,5]
                 "value_ltls": value_ltls,
-                "smv_var": smv_var,
             }
 
         else:
@@ -108,7 +88,8 @@ def load_cfg(path):
     return {
         "factors": facs,
         "end": d.get("end_flag"),
-        "step_var": d["step_var"]
+        "step_var": d["step_var"],
+        "test_rule": d.get("test_rule", "TRUE")
     }
 
 
@@ -124,56 +105,70 @@ def all_pairs(factors):
 
 # Keep the int values according to what was assigned in the settings.json
 def end_domain_guard(cfg):
-    clauses = []
-    for name, e in cfg["factors"].items():
-        # Only guard enum/int-like factors (domain not purely boolean)
-        vs = e["values"]
-        if all(isinstance(v, bool) for v in vs):
-            continue
+    return "TRUE"           
 
-        smv_var = e.get("smv_var")
-        if smv_var is None:
-            raise RuntimeError(f"Missing smv_var for factor {name!r}")
+def phi_for_value(factor_name, value, cfg):
+    fac = cfg["factors"][factor_name]
+    return fac["value_ltls"][value]
 
-        # Build: (smv_var = v1) | (smv_var = v2) | ...
-        disj = " | ".join(f"({smv_var} = {v})" for v in vs)
-        clauses.append(f"({disj})")
-
-    return "TRUE" if not clauses else " & ".join(clauses)
-
-#Build the LTL property for a given CTD pair. The cfg is guidance of how to build the LTL phrase
-def phi_for_pair(pair, cfg):
-    (f1, v1), (f2, v2) = pair
-
-    # factor LTLs characterize the trace
-    phi1 = cfg["factors"][f1]["value_ltls"][v1]
-    phi2 = cfg["factors"][f2]["value_ltls"][v2]
-
-    guard = end_domain_guard(cfg)
+def phi_for_row(row, cfg):
+    """
+    Build the LTL formula for a *full CTD row*:
+    test_rule & guard & (AND over all factor value LTLs).
+    """
+    guard = end_domain_guard(cfg)          # currently "TRUE"
     test_rule = cfg.get("test_rule", "TRUE")
     end_flag = cfg.get("end")
 
     if end_flag:
         test_rule = test_rule.replace("end_flag", end_flag)
-        reach_extract = f"F(({end_flag} = TRUE) & ({guard}))"
-    else:
-        reach_extract = "TRUE"
-    return f"({test_rule}) & ({reach_extract}) & ({phi1}) & ({phi2})"
-    
+
+    # Conjunction of all factor-value formulas from settings.json
+    ltl_parts = []
+    for name, value in row.items():
+        ltl_parts.append(f"({phi_for_value(name, value, cfg)})")
+
+    core = " & ".join(ltl_parts) if ltl_parts else "TRUE"
+
+    return f"(({test_rule}) & ({guard}) & ({core}))"
+
+def phi_for_pair(pair, cfg):
+    """
+    Build the LTL formula for a single CTD pair (f1=v1, f2=v2),
+    combined with the global test_rule.
+    """
+    (f1, v1), (f2, v2) = pair
+
+    phi1 = cfg["factors"][f1]["value_ltls"][v1]
+    phi2 = cfg["factors"][f2]["value_ltls"][v2]
+
+    test_rule = cfg.get("test_rule", "TRUE")
+    end_flag = cfg.get("end")
+
+    if end_flag:
+        test_rule = test_rule.replace("end_flag", end_flag)
+
+    core = f"({phi1}) & ({phi2})"
+    return f"(({test_rule}) & ({core}))"
+
+
+
 #Run nuXmv as the oracle by sending the not(phi) and returning the counter example output if the row is feasible, if True is returned the pair is infeasible return None.
 def run_nuxmv(model, phi, timeout_sec=30):
+    assert_balanced_parentheses(phi)
     script = (
         f"read_model -i {model}\n"
         "go\n"
         f"check_ltlspec -p \"!( {phi} )\"\n"
         "show_traces -v\n"
+        #"show_traces\n"
         "quit\n"                                #The script that runs the nuXmv
     )
     
     # make sure the temp file is cleaned
     with tempfile.NamedTemporaryFile("w", suffix=".cmd", delete=False) as f:
         f.write(script)
-        cmd = f.name
+        cmd = f.name   
     try:
         try:
             proc = subprocess.run(
@@ -182,6 +177,7 @@ def run_nuxmv(model, phi, timeout_sec=30):
                 text=True,
                 timeout=timeout_sec
             )
+
         except subprocess.TimeoutExpired as e:
             raise RuntimeError(
                 f"nuXmv timed out after {timeout_sec} seconds for phi:\n{phi}"
@@ -191,6 +187,7 @@ def run_nuxmv(model, phi, timeout_sec=30):
 
         verdict = None
         for line in out.splitlines():
+            
             m = SPEC_VERDICT_RE.match(line)
             if m:
                 verdict = m.group(1).lower()
@@ -215,84 +212,34 @@ def extract_steps(stdout, cfg):
     step_var = cfg["step_var"]
     steps = []
 
-    state = {}
+    current = {}
+    pending = None
+    
     for line in stdout.splitlines():
+        if "<!-- ################### Trace number:" in line:
+            break
+
         if STATE_RE.match(line):
-            if state and step_var in state:
-                val = state[step_var].strip().strip('"').lower()
-                steps.append(val)
-            state = {}
+
+            if pending is not None:
+                current.update(pending)
+                if step_var in current:
+                    val = current[step_var].strip().strip('"').lower()
+                    steps.append(val)
+            pending = {}     # NEW: start collecting assignments for this state
             continue
-
+        
         m = ASSIGN_RE.match(line)
-        if m:
-            state[m.group(1)] = m.group(2).strip()
+        if m and pending is not None:
+            pending[m.group(1)] = m.group(2).strip()
 
-    # finalize last state (end of output)
-    if state and step_var in state:
-        val = state[step_var].strip().strip('"').lower()
-        steps.append(val)
+    if pending is not None:
+        current.update(pending)
+        if step_var in current:
+            val = current[step_var].strip().strip('"').lower()
+            steps.append(val)
     return steps
-
-#Extract the row's factors when (phi) is feasible
-def extract_row(stdout, cfg):
-    end_flag = cfg["end"]           #may be None
-    facs = cfg["factors"]
-
-    state = {}
-    last_any = None
-    last_end = None
     
-    for line in stdout.splitlines():    
-        if STATE_RE.match(line):
-            if state:
-                last_any = state.copy()
-                if end_flag is not None and state.get(end_flag) == "TRUE":
-                    last_end = state.copy()
-            state = {}
-            continue            
-
-        m = ASSIGN_RE.match(line)
-        if m:
-            state[m.group(1)] = m.group(2).strip()
-    
-    if state:
-        last_any = state
-        if end_flag is not None and state.get(end_flag) == "TRUE":
-            last_end = state
-
-    # Choose which state to use for reading the factor summary variables:
-    # 1. If the model has an end_flag and we actually reached it, prefer that state.
-    # 2. Otherwise, fall back to the last state we saw in the trace.
-    if end_flag is not None and last_end is not None:
-        last = last_end
-    elif last_any is not None:
-        last = last_any
-    else:
-        # No states at all in the trace → nothing to extract
-        return None
-
-    row = {}
-    for name, e in facs.items():
-        raw = last.get(e["smv_var"])
-        if raw is None: 
-            return None
-        vs = e["values"]
-        if all(isinstance(v, bool) for v in vs):
-            value = (raw.upper() == "TRUE")
-        else:
-            value = int(raw) 
-
-        allowed = set(vs)
-        if value not in allowed:
-            raise RuntimeError(
-                f"Extracted value {value!r} for factor {name!r} "
-                f"not in declared domain {sorted(allowed)}"
-            )
-        row[name] = value       
-            
-    return row                                  # The abstract CTD test - looks like a_no_logout_after_add: True, b_max_items: 4, c_no_remove: False 
-
 #Files that are created to keep the traces for the test steps called in a name as: run_A0_B5_C1.txt
 def filename_for_row(row):
     parts = []
@@ -336,28 +283,37 @@ def prune_output_files(chosen_tests, output_dir=OUTPUT_DIR):
                 p.unlink()
             except OSError:
                 pass
-            
-#Runs nuXmv for a pair according to the model and calls the extract_row to figure out what is the entire set of factor values for this specific row
-def test_for_pair(pair, cfg, model):
-    status, out = run_nuxmv(model, phi_for_pair(pair, cfg))
-    if status == "FEASIBLE":    
-        row = extract_row(out, cfg)
-        if row is None:
-            raise RuntimeError("nuXmv returned a satisfying trace, but no parsable state was found.")
-        return row, out
-    if status == "INFEASIBLE":
-        # explicitly infeasible pair
-        return None, None
 
-    # we should never get here with the current run_nuxmv implementation
+def test_row(row, cfg, model):
+    """
+    Ask nuXmv whether there exists a trace satisfying the full row assignment.
+    Returns (is_feasible: bool, stdout).
+    """
+    phi = phi_for_row(row, cfg)
+    status, out = run_nuxmv(model, phi)
+
+    if status == "FEASIBLE":
+        return True, out
+    if status == "INFEASIBLE":
+        return False, out
+
     raise RuntimeError(
-        f"Unexpected nuXmv status {status!r} for phi:\n{phi_for_pair(pair, cfg)}\n\nOutput:\n{out}"
+        f"Unexpected nuXmv status {status!r} for row {row} with phi:\n{phi}\n\nOutput:\n{out}"
     )
+
+def pair_is_feasible(pair, cfg, model):
+    """
+    Ask nuXmv whether there exists a trace satisfying a single pair (f1=v1, f2=v2).
+    Returns True if the pair is feasible, False otherwise.
+    """
+    phi = phi_for_pair(pair, cfg)
+    status, _ = run_nuxmv(model, phi)
+    return (status == "FEASIBLE")
 
 #Checks which pairs are covered by the row
 def row_satisfies(row, pair):
     (f1, v1), (f2, v2) = pair
-    return row[f1] == v1 and row[f2] == v2
+    return row.get(f1) == v1 and row.get(f2) == v2
 
 def pairs_covered_by_row(row, all_pairs_set): 
     return {p for p in all_pairs_set if row_satisfies(row, p)}
@@ -393,6 +349,18 @@ def minimize_tests_greedy(tests, feasible_pairs):
 
     return chosen
 
+def build_row_from_pair(pair, cfg):
+    """
+    TEMPORARY: build a full row that agrees with the given pair,
+    and assigns a default value (first in domain) to all other factors.
+    """
+    (f1, v1), (f2, v2) = pair
+    row = {f1: v1, f2: v2}
+    for name, fac in cfg["factors"].items():
+        if name in row:
+            continue
+        row[name] = fac["values"][0]
+    return row
 
 #Sets up the data structures that are needed to implement the algorithm
 #It loads the configuration from settings.json
@@ -405,21 +373,57 @@ def gen_tests(model_path, settings_path):
     todo = set(pairs)
     
     tests = []
-    infeasible = set()
+    infeasible_pairs = set()
+    infeasible_rows = set()
     seen_rows = set()
 
     while todo:
         pair = random.choice(tuple(todo))
-        row, trace = test_for_pair(pair, cfg, model_path)
-
-        #infeasible
-        if row is None:
-            infeasible.add(pair)
+        candidate_row = build_row_from_pair(pair, cfg)
+        k = row_key(candidate_row)
+        
+        if k in infeasible_rows:
             todo.remove(pair)
             continue
         
-        #feasible
-        k = row_key(row)
+        is_feasible_row, trace = test_row(candidate_row, cfg, model_path)
+    
+        if not is_feasible_row:
+            row = candidate_row
+
+            # Collect all pairs appearing in this row
+            factor_names = sorted(cfg["factors"].keys())
+            row_pairs = set()
+            for i in range(len(factor_names)):
+                for j in range(i + 1, len(factor_names)):
+                    f1, f2 = factor_names[i], factor_names[j]
+                    p = ((f1, row[f1]), (f2, row[f2]))
+                    row_pairs.add(p)
+
+            # Check with nuXmv which pairs are truly infeasible
+            any_pair_infeasible = False
+            for p in row_pairs:
+                if p not in todo:
+                    continue
+                if not pair_is_feasible(p, cfg, model_path):
+                    infeasible_pairs.add(p)
+                    todo.remove(p)
+                    any_pair_infeasible = True
+
+            # If no pair is infeasible → this is a higher-order (3+ factors) infeasibility
+            # Mark the row itself as infeasible so we do not revisit it.
+            if not any_pair_infeasible:
+                infeasible_rows.add(k)
+
+
+            # In any case, do not add this row to tests
+            continue
+
+        # ----- Case: row is feasible -----
+        row = candidate_row
+
+        # If we have already produced this row, just remove any pairs it covers from todo
+                
         if k in seen_rows:
             # Row already produced; still remove covered pairs, but do not add a duplicate test / trace
             for p in list(todo):
@@ -437,11 +441,11 @@ def gen_tests(model_path, settings_path):
 
 
                 
-    feasible_pairs = pairs - infeasible
+    feasible_pairs = pairs - infeasible_pairs
     tests = minimize_tests_greedy(tests, feasible_pairs)
     prune_output_files(tests)
                 
-    return tests, infeasible, pairs
+    return tests, infeasible_pairs, pairs
 
 #The beginning
 def main():

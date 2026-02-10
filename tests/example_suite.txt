@@ -1,0 +1,6 @@
+login,add,add,checkout
+login,add,remove,add,checkout
+login,add,logout
+login,add,checkout,checkout
+login,add,add,checkout,logout
+login,add,add,remove,add,add,remove,add,checkout

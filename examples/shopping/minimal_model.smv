@@ -1,0 +1,50 @@
+MODULE main
+VAR
+  step : {login, logout, add, remove, checkout, idle};
+  mode : {LoggedOut, Shopping, CheckedOut};
+  items : 0..5;
+  end_of_test : boolean;
+
+ASSIGN
+  init(step) := login;
+  init(items):= 0;
+  init(mode) := LoggedOut;
+  init(end_of_test) := FALSE;
+    
+  next(end_of_test) := 
+    case
+      mode = CheckedOut & step = idle               : TRUE;
+      TRUE                                          : end_of_test;
+    esac;
+
+  --Coupling 'step' to mode
+  next(mode) := 
+    case
+      mode = CheckedOut & step = idle               : CheckedOut; --The tests end here.
+      mode = LoggedOut  & step = login              : Shopping;
+      mode = Shopping   & step = add                : Shopping;
+      mode = Shopping   & step = remove & items > 0 :Shopping;
+      mode = Shopping   & step=checkout & items > 0 : CheckedOut;    
+      mode = Shopping   & step = logout             : LoggedOut; --In case there are items in the cart the items will be 0. If we want to make an infeasible condition we can mark here & items=0
+    TRUE                                            : mode;
+  esac;
+
+  next(items) := 
+    case
+      -- reset cart on checkout & logout
+      step = logout                                 : 0;
+      step = checkout & items > 0                   : 0;
+      mode = Shopping & step = add    & items<5     :items + 1;
+      mode = Shopping & step = remove & items>0     :items - 1;
+      TRUE                                          : items;
+    esac; 
+  
+  next(step) :=   
+    case  
+      next(mode) = LoggedOut                        : {login};
+      next(mode) = Shopping & items = 0             : {add, logout};
+      next(mode) = Shopping & items > 0             : {add, remove, checkout, logout};
+      next(mode) = CheckedOut                       : {idle};
+      TRUE                                          : {idle};
+    esac; 
+

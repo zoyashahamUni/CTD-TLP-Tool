@@ -92,7 +92,7 @@ While the todo list is not empty:
      `phi_u(x)` and `phi_v(y)` are taken from `settings.json` as the per-factor LTL formulas for the selected factor values.
      `test_rule`, if provided, restricts traces to valid tests, and the `F(...)` component ensures the trace reached a valid extraction point (end_flag) while enforcing declared domains for non-Boolean factors (domain_guard).
 
-2. Ask nuXmv oracle if there is a trace in the FSM that satisfies `phi`  
+2. Ask nuXmv oracle if there is a trace in the SMV model that satisfies `phi`  
    (implemented by checking `!(phi)`; the nuXmv returns a counterexample  
    that satisfies `(phi)` if it is feasible or reports the specification is true (no counterexample) if there is no such trace.
 
