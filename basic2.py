@@ -1,5 +1,5 @@
 
-import json, subprocess, tempfile, os, re, random
+import json, subprocess, tempfile, os, re, random, sys
 from itertools import combinations
 from pathlib import Path
 
@@ -17,6 +17,70 @@ SPEC_VERDICT_RE = re.compile(
     r"^\s*--\s*specification\b.*\bis\s+(true|false)\b",
     re.IGNORECASE
 )
+
+def trace_to_test_line(stdout: str, cfg: dict) -> str:
+    """
+    Convert a single nuXmv trace (stdout) into one test line for the shopping demo,
+    e.g. 'login,add,add,checkout'.
+
+    Uses:
+      - cfg["step_var"] as the action variable (e.g. 'step')
+      - cfg["end"] as the end-of-test flag (e.g. 'end_of_test'), if present
+    """
+    step_var = cfg["step_var"]
+    end_flag = cfg.get("end")
+
+    actions = []
+    current = {}
+    pending = None
+    end_reached = False
+
+    for line in stdout.splitlines():
+        # stop if nuXmv starts another trace header
+        if "<!-- ################### Trace number:" in line:
+            break
+
+        if STATE_RE.match(line):
+            # finalize previous state before starting a new one
+            if pending is not None:
+                current.update(pending)
+
+                # collect step
+                if step_var in current:
+                    val = current[step_var].strip().strip('"').lower()
+                    if val != "idle":
+                        actions.append(val)
+
+                # check end-of-test
+                if end_flag and end_flag in current:
+                    v = current[end_flag].strip().lower()
+                    if v in ("true", "1"):
+                        end_reached = True
+                        break
+
+            # start collecting assignments for a new state
+            pending = {}
+            continue
+
+        m = ASSIGN_RE.match(line)
+        if m and pending is not None:
+            var, val = m.group(1), m.group(2).strip()
+            pending[var] = val
+
+    # finalize last pending state if loop ended without a new STATE line
+    if not end_reached and pending is not None:
+        current.update(pending)
+        if step_var in current:
+            val = current[step_var].strip().strip('"').lower()
+            if val != "idle":
+                actions.append(val)
+
+        if end_flag and end_flag in current:
+            v = current[end_flag].strip().lower()
+            if v in ("true", "1"):
+                end_reached = True
+
+    return ",".join(actions)
 
 def assert_balanced_parentheses(s: str):
     bal = 0
@@ -284,6 +348,58 @@ def prune_output_files(chosen_tests, output_dir=OUTPUT_DIR):
             except OSError:
                 pass
 
+def write_generated_tests_file(
+    tests,
+    row_to_line: dict,
+    path: str = "tests/generated_suite.txt"
+) -> None:
+    """
+    Write the minimized set of tests to a plain-text suite that score_tests.py can consume.
+    Each test is written as a single comma-separated line of actions.
+    """
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        for row in tests:
+            key = row_key(row)
+            line = row_to_line.get(key, "")
+            # Skip rows that somehow have no mapped line (should not happen normally)
+            if not line:
+                continue
+            f.write(line + "\n")
+
+def run_scorer_on_generated(path: str = "tests/generated_suite.txt") -> None:
+    """
+    Convenience helper: if the generated test suite exists, invoke the scorer
+    on it automatically, as if the user ran:
+        python score_tests.py tests/generated_suite.txt
+    """
+    suite_path = Path(path)
+    if not suite_path.exists():
+        print(f"\n[WARN] Generated suite not found at {path}, skipping scoring.")
+        return
+
+    print(f"\n==== Scoring generated test suite: {path} ====\n")
+
+    try:
+        result = subprocess.run(
+            ["python", "score_tests.py", str(suite_path)],
+            capture_output=True,
+            text=True
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to run scorer: {e}")
+        return
+
+    # Print scorer output
+    if result.stdout:
+        print(result.stdout)
+
+    if result.stderr and result.stderr.strip():
+        # send errors to stderr, but they will still appear in terminal
+        print(result.stderr, file=sys.stderr)
+
 def test_row(row, cfg, model):
     """
     Ask nuXmv whether there exists a trace satisfying the full row assignment.
@@ -376,6 +492,9 @@ def gen_tests(model_path, settings_path):
     infeasible_pairs = set()
     infeasible_rows = set()
     seen_rows = set()
+    row_to_line = {}
+
+
 
     while todo:
         pair = random.choice(tuple(todo))
@@ -434,6 +553,15 @@ def gen_tests(model_path, settings_path):
         seen_rows.add(k)
         tests.append(row)
         save_steps(row, trace, cfg)
+
+        #derive a test line from the trace and remember it for this row
+        test_line = trace_to_test_line(trace, cfg)
+        if test_line:
+            row_to_line[k] = test_line
+        
+        for p in list(todo):
+            if row_satisfies(row, p):
+                todo.remove(p)
         
         for p in list(todo):
             if row_satisfies(row, p):
@@ -444,6 +572,10 @@ def gen_tests(model_path, settings_path):
     feasible_pairs = pairs - infeasible_pairs
     tests = minimize_tests_greedy(tests, feasible_pairs)
     prune_output_files(tests)
+    
+    #write minimized tests into a text suite for the scorer
+    write_generated_tests_file(tests, row_to_line)
+    
                 
     return tests, infeasible_pairs, pairs
 
@@ -468,6 +600,9 @@ def main():
     print(f"\nTotal CTD pairs:     {len(pairs)}")
     print(f"Feasible CTD pairs:  {len(pairs) - len(infeasible)}")
     print(f"Infeasible CTD pairs:{len(infeasible)}")
-
+    
+    # automatically score the generated test suite, if it exists
+    run_scorer_on_generated("tests/generated_suite.txt")
+    
 if __name__ == "__main__":
     main()

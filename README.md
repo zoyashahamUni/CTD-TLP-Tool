@@ -23,12 +23,18 @@ You will see a score and a list of detected and missed bugs.
 - Run again: `python score_tests.py tests/example_suite.txt`
 - Watch how the score and the detected bugs list change.
 
+### Run the automatic CTD-TLP generator
 
+In addition to editing a test suite by hand, you can also run the automatic
+generator:
 
+```bash
+python basic2.py```
 
-The script finds a small set of feasible tests based on CTD algorithm (pairwise) while using the nuXmv model as the oracle.  
-It generates LTL formula for each selected pair, by combining the factor LTL formulas which are defined in `settings.json`.  
-The LTL formula is used to ask the nuXmv if a feasible trace exists which satisfies the two factor conditions.
+The script invokes nuXmv to produce a small set of feasible tests that cover all pairs of the input variables, stores the generated tests as action sequences in the file tests/generated_suite.txt, and finally runs the scoring tool on the file `tests/generated_suite.txt`.
+
+The CTD-TLP generator (`basic2.py`), utilizes the nuXmv model as an oracle to create a compact set of **feasible tests** with pairwise CTD coverage.
+It builds complete factor assignments (rows) from pairs of values, evaluates each row with nuXmv using LTL formulas from settings.json, prunes infeasible rows, and marks pairs that cannot occur as **infeasible**, then minimizes the test set while ensuring all feasible pairs are covered.
 
 ## How the tool is working
 
@@ -36,7 +42,7 @@ The LTL formula is used to ask the nuXmv if a feasible trace exists which satisf
 
 The tool reads two files: `settings.json` and `model.smv`
 
-- `settings.json` – defines the test parameters of the system which is under test. It includes their domains and the temporal constraints for each parameter's value. The LTL formulas are constructed from the factors.  
+- `settings.json` – defines the test parameters of the system which is under test. It includes their domains and the temporal constraints for each parameter's value. The LTL formulas are constructed from the factors.
 - `model.smv` – The set of rules that exist in our testing system.
 
 ### 1.1 Steps and Termination
@@ -78,12 +84,21 @@ The LTL formula that is passed for each test has the structure defined in `setti
 It is constructed directly from the per-factor LTL formula.  
 
 For a given factor-value assignment `(f = v)`, the matching LTL formula `phi_f(v)` is taken from `settings.json`.  
-When a pair is selected `(f1 = v1, f2 = v2)`, the tool constructs:
+When a full row is selected (i.e., an assignment of one value per factor):
+`phi_row = test_rule & phi_f1(v1) & phi_f2(v2) & ... & phi_fk(vk)`
 
-`phi = test_rule & F((end_flag = TRUE) & domain_guard) & phi_f1(v1) & phi_f2 (v2)`
-The LTL formulas per factor, `phi_f(v)`, express temporal characteristics that may span multiple states, therefore they are combined outside the operator `F`. 
-The operator `F` is used only to designate a valid extraction point for the factor values, and where all non-Boolean summary variables satisfy `domain_guard`.
-The system's temporal behavior is encoded in the SMV transition relation. Given this model, the oracle query checks whether there exists a trace that satisfies `phi` for the selected factor values. 
+where each `phi_fi(vi)` is the LTL formula for factor `fi` taking value `vi`.
+
+- `test_rule` is an optional LTL constraint taken from `settings.json`
+  (for example, it can enforce that the trace eventually reaches the
+  logical end-of-test flag). If no `test_rule` is provided, it is treated
+  as `TRUE`.
+- The per-factor formulas `phi_f(v)` express temporal characteristics that
+  may span multiple states, so they are combined directly in conjunction.
+
+The system's temporal behavior is encoded in the SMV transition relation.
+Given this model, the oracle query checks whether there exists a trace that
+satisfies `phi_row` for the selected factor values.
 ---
 
 ### 2. Pair Generation (**pseudo code**)
@@ -113,24 +128,37 @@ The todo list is:
 While the todo list is not empty:
 
 1. Pick randomly one pair `(u = x, v = y)` from the list **todo**:
-   - construct the LTL formula  
-     ```
-     phi = test_rule & F((end_flag = TRUE) & domain_guard) & phi_u(x) & phi_v(y)
-     ```
-     `phi_u(x)` and `phi_v(y)` are taken from `settings.json` as the per-factor LTL formulas for the selected factor values.
-     `test_rule`, if provided, restricts traces to valid tests, and the `F(...)` component ensures the trace reached a valid extraction point (end_flag) while enforcing declared domains for non-Boolean factors (domain_guard).
 
-2. Ask nuXmv oracle if there is a trace in the SMV model that satisfies `phi`  
-   (implemented by checking `!(phi)`; the nuXmv returns a counterexample  
-   that satisfies `(phi)` if it is feasible or reports the specification is true (no counterexample) if there is no such trace.
+2. **Extend this pair to a full row**:
+   - assign `u = x` and `v = y`,
+   - for every other factor, assign a default value (the first value in its domain).
 
-   1. If no such trace exists – the pair `(u=x, v=y)` will be marked as infeasible and will be removed from the list **todo**.
-   2. If such a trace exists –
-         - Let `W = <s_0, s_1,..., s_k>` be the trace that is returned by the nuXmv oracle, where every `s_i` is a system state.   
-         - The test that corresponds to `W` is extracted as the sequence of values of `step_var` along the trace and stored in `output_traces` folder.
-         - The factor values are extracted using the summary variables that characterize the whole trace.
-         - CTD pairs that are satisfied by the assignment of factors are then tagged as covered and removed from the `todo` list.
+3. Construct the LTL formula for the entire row:
+   - For each factor-value `(f = v)` in the row, take `phi_f(v)` from `settings.json`.
+   - Build
+     \[
+       \phi_{\text{row}} = \text{test\_rule} \ \&\ \bigwedge_{(f=v)\ \text{in row}} \phi_f(v)
+     \]
 
+4. Ask the nuXmv oracle if there is a trace in the SMV model that satisfies
+   \(\phi_{\text{row}}\).
+
+   1. **If no such trace exists** (the row is infeasible):
+      - Consider all factor pairs appearing in this row.
+      - For each such pair, ask nuXmv (via a smaller query) if the pair itself
+        is feasible.
+      - Pairs that are proven infeasible are added to the `infeasible_pairs`
+        set and removed from `todo`.
+      - If no pair is infeasible, the row is marked as a higher-order
+        infeasibility (3+ factors) and remembered so it will not be tried again.
+   2. **If such a trace exists** (the row is feasible):
+      - Let \(W = \langle s_0, s_1, \dots, s_k \rangle\) be the returned trace.
+      - Extract the test as the sequence of `step_var` values along the trace,
+        ignoring `idle` and stopping when `end_flag` becomes `TRUE`.
+      - Save the trace in the `output_traces` folder and keep the action
+        sequence for this row.
+      - Mark all CTD pairs satisfied by the row’s factor assignment as
+        covered and remove them from the `todo` list.
 
 ---
 
@@ -219,9 +247,18 @@ Minimized set of tests, each test represents the trace in test steps
 
 1. Open the repository on the Github site, then click **Code --> Codespace --> Create codespace on main**.
 2. Wait for the Codespace to start (VS Code in the browser).
-3. Open a Terminal in the Codespase and execute:
-```
+3. Open a Terminal in the Codespase.
 
+You can now run either of the following demos:
+
+- **Manual scorng demo (example suite):**
+
+  ```bash
+  python score_tests.py tests/example_suite.txt
+  ```
+
+- **Automatic CTD-TLP generator + scoring**
+```
 python basic2.py
 ```
 
