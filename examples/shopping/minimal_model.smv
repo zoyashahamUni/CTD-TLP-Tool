@@ -5,6 +5,9 @@ VAR
   items : 0..5;
   end_of_test : boolean;
 
+IVAR
+  chosen_step : {login, logout, add, remove, checkout, idle};
+
 ASSIGN
   init(step) := login;
   init(items):= 0;
@@ -39,12 +42,14 @@ ASSIGN
       TRUE                                          : items;
     esac; 
   
-  next(step) :=   
-    case  
-      next(mode) = LoggedOut                        : {login};
-      next(mode) = Shopping & items = 0             : {add, logout};
-      next(mode) = Shopping & items > 0             : {add, remove, checkout, logout};
-      next(mode) = CheckedOut                       : {idle};
-      TRUE                                          : {idle};
-    esac; 
+    next(step) := chosen_step;
+  
+TRANS
+  case
+    next(mode) = LoggedOut                      : chosen_step = login;
+    next(mode) = Shopping & items = 0           : chosen_step in {add, logout};
+    next(mode) = Shopping & items > 0           : chosen_step in {add, remove, checkout, logout};
+    next(mode) = CheckedOut                     : chosen_step in {checkout, logout, idle};
+    TRUE                                        : chosen_step = idle;
+  esac;
 

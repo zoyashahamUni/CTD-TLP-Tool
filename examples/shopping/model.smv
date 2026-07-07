@@ -1,72 +1,55 @@
 MODULE main
 VAR
-  step : {login, logout,add, remove, checkout, idle};
+  step : {login, logout, add, remove, checkout, idle};
   mode : {LoggedOut, Shopping, CheckedOut};
   items : 0..5;
   end_of_test : boolean;
 
-  logout_after_add : boolean;
-  removed_ever : boolean;
-  max_items : 0..5;
+IVAR
+  chosen_step : {login, logout, add, remove, checkout, idle};
 
 ASSIGN
   init(step) := login;
   init(items):= 0;
   init(mode) := LoggedOut;
   init(end_of_test) := FALSE;
-  init(logout_after_add) := FALSE;
-  init(removed_ever) := FALSE;
-  init(max_items) := 0;
     
   next(end_of_test) := 
     case
-      mode = CheckedOut & step = idle : TRUE;
-      TRUE                            : end_of_test;
+      mode = CheckedOut & step = idle               : TRUE;
+      TRUE                                          : end_of_test;
     esac;
 
   --Coupling 'step' to mode
   next(mode) := 
     case
-      mode = CheckedOut & step = idle             : CheckedOut; --The tests end here.
-      mode = LoggedOut  & step = login            : Shopping;
-      mode = Shopping   & (step in {add, remove}) : Shopping;
-      mode = Shopping   & step=checkout & items >0: CheckedOut;    
-      mode = Shopping   & step = logout           : LoggedOut; --In case there are items in the cart the items will be 0. If we want to make an infeasible condition we can mark here & items=0
-    TRUE                                          : mode;
+      mode = CheckedOut & step = idle               : CheckedOut; --The tests end here.
+      mode = LoggedOut  & step = login              : Shopping;
+      mode = Shopping   & step = add                : Shopping;
+      mode = Shopping   & step = remove & items > 0 :Shopping;
+      mode = Shopping   & step=checkout & items > 0 : CheckedOut;    
+      mode = Shopping   & step = logout             : LoggedOut; --In case there are items in the cart the items will be 0. If we want to make an infeasible condition we can mark here & items=0
+    TRUE                                            : mode;
   esac;
 
   next(items) := 
     case
       -- reset cart on checkout & logout
-      step in {logout, checkout}                  :0;
-      mode = Shopping & step = add    & items<5   :items + 1;
-      mode = Shopping & step = remove & items>0   :items - 1;
-      TRUE                                        : items;
-    esac;
-
-  next(step) := 
-    case
-      next(mode) = LoggedOut    : {login};
-      next(mode) = Shopping     : {add, remove, checkout, logout};
-      next(mode) = CheckedOut   : {idle};
-    esac;
-
-  next(logout_after_add)  :=
-    case
-      step = logout & items > 0               : TRUE;
-      TRUE                                        : logout_after_add;
-    esac;
-
-  next(removed_ever)          :=
-    case
-      step = remove : TRUE;                     -- In case there was a remove the flag becomes True
-      TRUE          : removed_ever;              -- Otherwise no change
-    esac;
-
-  next(max_items) :=
-    case
-      next(items) > max_items                     : next(items);
-      TRUE                                        : max_items;
-    esac;
-
+      step = logout                                 : 0;
+      step = checkout & items > 0                   : 0;
+      mode = Shopping & step = add    & items<5     :items + 1;
+      mode = Shopping & step = remove & items>0     :items - 1;
+      TRUE                                          : items;
+    esac; 
+  
+    next(step) := chosen_step;
+  
+TRANS
+  case
+    next(mode) = LoggedOut                      : chosen_step = login;
+    next(mode) = Shopping & items = 0           : chosen_step in {add, logout};
+    next(mode) = Shopping & items > 0           : chosen_step in {add, remove, checkout, logout};
+    next(mode) = CheckedOut                     : chosen_step in {checkout, logout, idle};
+    TRUE                                        : chosen_step = idle;
+  esac;
 
