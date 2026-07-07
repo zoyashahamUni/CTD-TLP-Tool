@@ -1,23 +1,34 @@
 {
   "factors": [
     {
-      "name": "a_logout_after_add",
-      "ltl": "F((step = add) & F((step = logout) & !end_of_test))"
-    },
-    {
-      "name": "b_max_items",
+      "name": "a_add_then_remove",
       "values": [
-        { "value": 3, "ltl": "F(items = 3) & !F(items = 4) & !F(items = 5)" },
-        { "value": 4, "ltl": "F(items = 4) & !F(items = 5)" },
-        { "value": 5, "ltl": "F(items = 5)" }
+        {
+          "value": "add_remove",
+          "ltl": "F((step = add) & X(step = remove))"
+        }
       ]
     },
     {
-      "name": "c_removed_ever",
-      "ltl": "F((step = remove) & (items > 0))"
+      "name": "b_checkout_then_idle",
+      "values": [
+        {
+          "value": "checkout_idle",
+          "ltl": "F((step = checkout) & X(step = idle))"
+        }
+      ]
+    },
+    {
+      "name": "c_next_add",
+      "values": [
+        {
+          "value": "next_add",
+          "ltl": "X(step = add)"
+        }
+      ]
     }
   ],
   "step_var": "step",
   "end_flag": "end_of_test",
-  "test_rule": "TRUE"                   
+  "test_rule": "F(end_flag)"
 }
