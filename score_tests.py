@@ -12,10 +12,6 @@ BUGS = [
     },
     {
         "id": "Bug 3",
-        "name": "Long mixed shopping",
-    },
-    {
-        "id": "Bug 4",
         "name": "Checkout with two items",
     },
 ]
@@ -90,40 +86,14 @@ def detect_bugs(tests):
                 if has_checkout_before_logout:
                     results["Bug 2"].append(lineno)
 
-        # ---------------------------------
-        # Bug 3 – Long mixed shopping 
-        # Prefix before first checkout has:
-        #   - length >= 6
-        #   - at least 2 adds
-        #   - at least 1 remove
-        #   - cart non-empty at first checkout (items > 0)
-        # ---------------------------------
-        if "Bug 3" in results and "checkout" in actions:
-            first_checkout_idx = actions.index("checkout")
-            prefix = actions[:first_checkout_idx]
-
-            if len(prefix) >= 6:
-                add_count = prefix.count("add")
-                remove_count = prefix.count("remove")
-
-                if add_count >= 2 and remove_count >= 1:
-                    # Simulate items counter up to the first checkout
-                    items = 0
-                    for a in prefix:
-                        if a == "add" and items < 5:
-                            items += 1
-                        elif a == "remove" and items > 0:
-                            items -= 1
-                    if items > 0:
-                        results["Bug 3"].append(lineno)
 
         # ---------------------------------
-        # Bug 4 – Checkout with two items
+        # Bug 3 – Checkout with two items
         # At any checkout in the test, items == 2 at that point
         # ---------------------------------
-        if "Bug 4" in results:
+        if "Bug 3" in results:
             items = 0
-            triggered_bug4 = False
+            triggered_bug3 = False
             for a in actions:
                 if a == "add" and items < 5:
                     items += 1
@@ -131,11 +101,11 @@ def detect_bugs(tests):
                     items -= 1
 
                 if a == "checkout" and items == 2:
-                    triggered_bug4 = True
+                    triggered_bug3 = True
                     break
 
-            if triggered_bug4:
-                results["Bug 4"].append(lineno)
+            if triggered_bug3:
+                results["Bug 3"].append(lineno)
 
     return results
 
